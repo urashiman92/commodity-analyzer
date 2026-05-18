@@ -1,0 +1,28 @@
+# 環境変数（絶対にコミットしない）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ログ
+logs/
+*.log
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# バックアップ
+*.bak

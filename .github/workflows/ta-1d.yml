@@ -1,0 +1,38 @@
+name: TA Analysis (Daily)
+
+on:
+  schedule:
+    # 毎日 23:10 UTC = 翌8:10 JST（NY市場クローズ後）
+    - cron: "10 23 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis
+        run: python main.py --tf 日足
+        env:
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          WEBHOOK_WHEAT:        ${{ secrets.WEBHOOK_WHEAT }}
+          WEBHOOK_GOLD:         ${{ secrets.WEBHOOK_GOLD }}
+          WEBHOOK_OIL:          ${{ secrets.WEBHOOK_OIL }}
+          WEBHOOK_CORN:         ${{ secrets.WEBHOOK_CORN }}
+          WEBHOOK_SOY:          ${{ secrets.WEBHOOK_SOY }}
+          WEBHOOK_COPPER:       ${{ secrets.WEBHOOK_COPPER }}
+          WEBHOOK_CRITICAL:     ${{ secrets.WEBHOOK_CRITICAL }}
+          WEBHOOK_DIVERGENCE:   ${{ secrets.WEBHOOK_DIVERGENCE }}
+          WEBHOOK_REFERENCE:    ${{ secrets.WEBHOOK_REFERENCE }}
+          PYTHONIOENCODING:     utf-8

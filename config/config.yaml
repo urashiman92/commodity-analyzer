@@ -1,0 +1,77 @@
+# =====================================================
+# テクニカル分析Bot 設定ファイル
+# =====================================================
+
+# 監視対象銘柄（yfinance先物シンボル）
+symbols:
+  - name: "小麦"
+    ticker: "ZW=F"
+    webhook_env: "WEBHOOK_WHEAT"
+  - name: "金"
+    ticker: "GC=F"
+    webhook_env: "WEBHOOK_GOLD"
+  - name: "WTI原油"
+    ticker: "CL=F"
+    webhook_env: "WEBHOOK_OIL"
+  - name: "トウモロコシ"
+    ticker: "ZC=F"
+    webhook_env: "WEBHOOK_CORN"
+  - name: "大豆"
+    ticker: "ZS=F"
+    webhook_env: "WEBHOOK_SOY"
+  - name: "銅"
+    ticker: "HG=F"
+    webhook_env: "WEBHOOK_COPPER"
+
+# 分析する時間軸
+timeframes:
+  - label: "15分"
+    interval: "15m"
+    period: "5d"      # 5日分のデータを取得
+    lookback: 200     # 計算に使う直近本数
+  - label: "1時間"
+    interval: "1h"
+    period: "60d"
+    lookback: 200
+  - label: "4時間"
+    interval: "1h"    # 1時間足を取得して4時間にリサンプリング
+    period: "180d"
+    lookback: 200
+    resample: "4H"
+  - label: "日足"
+    interval: "1d"
+    period: "2y"
+    lookback: 200
+
+# テクニカル指標パラメータ
+indicators:
+  ema_periods: [20, 50, 200]
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bb_period: 20
+  bb_std: 2
+
+# シグナル検出条件（広めの推奨設定）
+signal_thresholds:
+  rsi_overbought: 70
+  rsi_oversold: 30
+  ema_cross_lookback: 3       # 直近N本以内のクロスを検出
+  macd_cross_lookback: 3
+  bb_touch_threshold: 0.99    # BB上限の99%以上で「タッチ」判定
+
+# Gemini設定
+gemini:
+  # 短時間軸は高速モデル、長時間軸は通常モデル
+  model_short: "gemini-2.5-flash-lite"  # 15分・1時間用
+  model_long: "gemini-2.5-flash"        # 4時間・日足用
+  max_output_tokens: 1500
+  temperature: 0.3
+
+# ログ設定
+logging:
+  level: "INFO"
+  file: "logs/analyzer.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5

@@ -1,0 +1,39 @@
+name: TA Analysis (15min)
+
+on:
+  schedule:
+    # 2,17,32,47分に起動（遅延を見込んだオフセット）
+    # UTC表記: 日本時間 -9時間
+    - cron: "2,17,32,47 * * * *"
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis
+        run: python main.py --tf 15分
+        env:
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          WEBHOOK_WHEAT:        ${{ secrets.WEBHOOK_WHEAT }}
+          WEBHOOK_GOLD:         ${{ secrets.WEBHOOK_GOLD }}
+          WEBHOOK_OIL:          ${{ secrets.WEBHOOK_OIL }}
+          WEBHOOK_CORN:         ${{ secrets.WEBHOOK_CORN }}
+          WEBHOOK_SOY:          ${{ secrets.WEBHOOK_SOY }}
+          WEBHOOK_COPPER:       ${{ secrets.WEBHOOK_COPPER }}
+          WEBHOOK_CRITICAL:     ${{ secrets.WEBHOOK_CRITICAL }}
+          WEBHOOK_DIVERGENCE:   ${{ secrets.WEBHOOK_DIVERGENCE }}
+          WEBHOOK_REFERENCE:    ${{ secrets.WEBHOOK_REFERENCE }}
+          PYTHONIOENCODING:     utf-8

@@ -8,7 +8,17 @@
 
 時間減衰: 1.0 (0-6h) / 0.7 (6-24h) / 0.4 (24-72h) / 0.1 (72h+)
   → 係数を 1.0 に向けて引き戻す
+
+──────────────────────────────────────────────────────────
+このモジュールは2系統のAPIを持つ:
+  1. calc_alignment_coefficient(...)  : 単一方向スカラ版(旧)。後方互換のため温存。
+  2. calculate_alignment(items, ...)  : 実ニュース(NewsItem)のリストを受ける版(新)。
+     news-bot が GitHub raw に書き出す news_state.json / reports_state.json を
+     analyzer が取得し、銘柄別に集約して整合性係数を算出する。
+──────────────────────────────────────────────────────────
 """
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 # 時間帯ごとの減衰係数 (上限時間, 減衰率)
 _TIME_DECAY: list[tuple[float, float]] = [
@@ -90,4 +100,129 @@ def calc_alignment_coefficient(
         'news_direction': news_dir,
         'base':           base,
         'decay':          decay,
+    }
+
+
+# ══════════════════════════════════════════════════════════
+# 新API: 実ニュース(NewsItem)リストを受けて整合性係数を算出
+# ══════════════════════════════════════════════════════════
+
+# impact/direction 文字列 → 符号 (日英両対応・小文字化して照合)
+DIRECTION_MAP: dict[str, int] = {
+    '上昇': 1, '強気': 1, 'bullish': 1,
+    '下落': -1, '弱気': -1, 'bearish': -1,
+    '中立': 0, '混合': 0, 'neutral': 0,
+}
+
+# 権威ソース重要度フロア: source文字列(小文字)に含まれれば importance を引き上げ
+_AUTHORITY_FLOORS: list[tuple[int, tuple[str, ...]]] = [
+    (5, ('usda', 'wasde', 'nass')),
+    (4, ('eia', 'fomc', 'opec', 'lme', 'powell', 'federal reserve')),
+]
+
+
+@dataclass
+class NewsItem:
+    """news-bot が書き出した1ニュースレコード"""
+    title: str
+    timestamp: datetime  # UTC tz-aware
+    importance: int
+    direction: str
+    source: str
+    commodity: str
+    summary: str = ""
+
+
+def time_decay_weight(age_hours: float) -> float:
+    """ニュースの経過時間による重み (0..1)。古いほど軽い。"""
+    if age_hours < 6:
+        return 1.0
+    if age_hours < 24:
+        return 0.7
+    if age_hours < 72:
+        return 0.4
+    if age_hours < 168:
+        return 0.15
+    return 0.0
+
+
+def _effective_importance(importance, source: str) -> int:
+    """権威ソースなら重要度をフロアまで引き上げた実効重要度を返す"""
+    s = (source or '').lower()
+    floor = 0
+    for level, keys in _AUTHORITY_FLOORS:
+        if any(k in s for k in keys):
+            floor = max(floor, level)
+    try:
+        imp = int(importance)
+    except (TypeError, ValueError):
+        imp = 1
+    return max(imp, floor)
+
+
+def calculate_alignment(news_items: list, ta_direction: int, now=None) -> dict:
+    """
+    実ニュースのリストを集約して整合性係数を算出する。
+
+    Args:
+        news_items:   NewsItem のリスト (該当銘柄ぶんのみ)
+        ta_direction: TA期待度の符号 (+1=強気 / -1=弱気 / 0=中立)
+        now:          現在時刻(UTC aware)。省略時は datetime.now(timezone.utc)
+
+    Returns:
+        {
+            'coefficient':           float,  # 0.3..1.7
+            'normalized':            float,  # -1..+1 (= ta_direction * net_direction)
+            'net_direction':         float,  # -1..+1 (ニュース自体の加重方向)
+            'news_direction':        str,    # 'bullish'|'bearish'|'neutral'
+            'news_count':            int,
+            'high_importance_count': int,    # importance>=4 & age<24h & 方向あり
+        }
+
+    ニュース0件・全て減衰0の場合は coefficient=1.0 (中立素通り)。
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    total_w = 0.0
+    signed_w = 0.0  # Σ(weight · direction)
+    high_importance_count = 0
+
+    for item in news_items:
+        dir_value = DIRECTION_MAP.get(str(item.direction).strip().lower(), 0)
+        eff_imp = _effective_importance(item.importance, item.source)
+
+        ts = item.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_hours = (now - ts).total_seconds() / 3600.0
+
+        weight = eff_imp * time_decay_weight(age_hours)
+        if weight <= 0:
+            continue
+
+        total_w += weight
+        signed_w += weight * dir_value
+
+        if eff_imp >= 4 and age_hours < 24 and dir_value != 0:
+            high_importance_count += 1
+
+    net_direction = (signed_w / total_w) if total_w > 0 else 0.0
+    normalized = ta_direction * net_direction
+    coefficient = max(0.3, min(1.7, 1.0 + 0.7 * normalized))
+
+    if net_direction > 0:
+        news_direction = 'bullish'
+    elif net_direction < 0:
+        news_direction = 'bearish'
+    else:
+        news_direction = 'neutral'
+
+    return {
+        'coefficient':           round(coefficient, 3),
+        'normalized':            round(normalized, 3),
+        'net_direction':         round(net_direction, 3),
+        'news_direction':        news_direction,
+        'news_count':            len(news_items),
+        'high_importance_count': high_importance_count,
     }

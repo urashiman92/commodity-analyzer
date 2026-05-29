@@ -13,9 +13,11 @@ import io
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import requests
 import yaml
 from dotenv import load_dotenv
 
@@ -28,9 +30,59 @@ from signal_detector import detect_signals, build_indicator_snapshot
 from gemini_analyzer import analyze_with_gemini
 from discord_notifier import send_to_discord
 from expectation_scorer import calc_expectation
-from news_alignment import calc_alignment_coefficient
+from news_alignment import calculate_alignment, NewsItem
 from conviction_scorer import calc_conviction, format_conviction_summary
 from notification_router import get_destination, resolve_webhook_url, channel_label
+
+
+# news-bot が GitHub raw に書き出すニュース状態ファイル
+_NEWS_BASE = "https://raw.githubusercontent.com/urashiman92/commodity-news-bot/main"
+NEWS_STATE_URLS = (
+    f"{_NEWS_BASE}/news_state.json",
+    f"{_NEWS_BASE}/reports_state.json",
+)
+
+# analyzer銘柄名 → news-botカテゴリキー のエイリアス
+# (exact matchのみ。IG証券拡張時にここを増やす。未登録は素通り)
+COMMODITY_ALIAS = {
+    "WTI原油": "原油",
+}
+
+
+def load_news_items(symbol: str) -> list:
+    """news-bot の raw ファイルから該当銘柄のニュースを取得し NewsItem 化して返す。
+
+    - news_state.json / reports_state.json の両方を取得 (timeout=10)。
+    - 取得・パース失敗したファイルはスキップ (analyzer は落とさない)。
+    - commodity が symbol (エイリアス変換後) と exact match のものだけ採用。
+    - timestamp は ISO8601 を datetime に復元 (naive は UTC とみなす)。
+    """
+    target = COMMODITY_ALIAS.get(symbol, symbol)
+    items = []
+    for url in NEWS_STATE_URLS:
+        try:
+            records = requests.get(url, timeout=10).json()
+        except Exception:
+            continue
+        for d in records:
+            if d.get("commodity") != target:
+                continue
+            try:
+                ts = datetime.fromisoformat(d["timestamp"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            items.append(NewsItem(
+                title=d.get("title", ""),
+                timestamp=ts,
+                importance=d.get("importance", 1),
+                direction=d.get("direction", "中立"),
+                source=d.get("source", ""),
+                commodity=d.get("commodity", ""),
+                summary=d.get("summary", ""),
+            ))
+    return items
 
 
 def setup_logger(config: dict):
@@ -134,14 +186,14 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
     logger.info(f"  Gemini方向: {gemini_result['direction']}  分析テキスト: {len(analysis_text)}文字")
 
     # 6. ニュース整合性係数 + 確信度スコア
-    alignment = calc_alignment_coefficient(
-        news_direction=gemini_result['direction'],
-        ta_direction=ta_expectation['direction'],
-        ta_score=ta_expectation['score'],
-        # is_authority_source / news_age_hours はニュースフィード統合時に使用
-    )
+    #    実ニュース(news-bot由来)を集約して係数算出。ニュース0件なら係数1.00(中立素通り)。
+    news_items = load_news_items(name)
+    ta_score = ta_expectation['score']
+    ta_direction = 1 if ta_score > 0 else (-1 if ta_score < 0 else 0)
+    alignment = calculate_alignment(news_items, ta_direction)
     conviction = calc_conviction(ta_expectation, alignment)
     logger.info(f"  確信度: {conviction['score']:+.1f}  係数: {alignment['coefficient']:.2f}"
+                f"  ニュース: {alignment['news_count']}件(重要{alignment['high_importance_count']})"
                 f"  divergence: {conviction['is_divergence']}")
 
     # 7. ルーティング

@@ -38,15 +38,28 @@ def calc_conviction(ta_expectation: dict, news_alignment: dict) -> dict:
     else:
         direction = 'neutral'
 
+    # ダイバージェンス: 3条件AND
+    #   1. ニュースとTAが逆向き (net_direction · ta_direction < 0)
+    #   2. TA強度が十分          (|ta_score| >= 30)
+    #   3. 重要ニュースあり       (importance>=4 & age<24h & 方向ありが1件以上)
+    net_direction = news_alignment.get('net_direction', 0.0)
+    ta_direction = 1 if ta_score > 0 else (-1 if ta_score < 0 else 0)
+    high_importance_count = news_alignment.get('high_importance_count', 0)
+    is_divergence = (
+        net_direction * ta_direction < 0
+        and abs(ta_score) >= 30.0
+        and high_importance_count >= 1
+    )
+
     return {
         'score':          score,
         'abs_score':      abs_score,
         'direction':      direction,
-        'is_divergence':  news_alignment['is_divergence'],
+        'is_divergence':  is_divergence,
         'ta_score':       ta_score,
         'coefficient':    coeff,
         'ta_direction':   ta_expectation['direction'],
-        'news_direction': news_alignment['news_direction'],
+        'news_direction': news_alignment.get('news_direction', 'neutral'),
         'components':     ta_expectation.get('components', {}),
     }
 

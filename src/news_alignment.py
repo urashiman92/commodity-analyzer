@@ -120,6 +120,31 @@ _AUTHORITY_FLOORS: list[tuple[int, tuple[str, ...]]] = [
     (4, ('eia', 'fomc', 'opec', 'lme', 'powell', 'federal reserve')),
 ]
 
+# サプライズ係数: 予想比でどうだったか。重みに乗算する。
+# inline(予想通り)は大幅減衰し、予想通りの権威発表が増幅するバグを消す。
+SURPRISE_FACTORS: dict[str, float] = {
+    'high':    1.0,
+    'low':     0.6,
+    'inline':  0.25,
+    'unknown': 0.8,
+}
+
+# 確信度の基準重み: 係数のフル振れに必要な総重み。
+# importance5 × time_decay1.0 × surprise1.0 = 高重要度・新鮮・予想外ニュース1件分 = 5.0。
+# total_w がこれ未満なら係数の振れ幅を比例縮小し、弱い/予想通りニュースで係数が1.00寄りに張り付く。
+W_REF: float = 5.0
+
+# ニュースタイプ別の時間減衰カーブ: (上限時間h, 重み) のリスト。上から最初に該当した重みを返す。
+# コモディティ先物は織り込みが速いので、scheduled/breaking は数時間で減衰させる。
+_TYPE_DECAY_CURVES: dict[str, list[tuple[float, float]]] = {
+    # 予定イベント(WASDE/EIA/FOMC/雇用統計): 数分〜数時間で織り込み
+    'scheduled':  [(1.0, 1.0), (3.0, 0.5), (12.0, 0.15)],
+    # 突発(OPEC緊急/地政学/供給ショック): 数時間効く
+    'breaking':   [(3.0, 1.0), (12.0, 0.6), (36.0, 0.25)],
+    # 解説・観測: 既に織り込まれており効きは緩く短い
+    'commentary': [(12.0, 0.5), (48.0, 0.25), (120.0, 0.1)],
+}
+
 
 @dataclass
 class NewsItem:
@@ -131,18 +156,21 @@ class NewsItem:
     source: str
     commodity: str
     summary: str = ""
+    event_type: str = "commentary"
+    surprise: str = "unknown"
 
 
-def time_decay_weight(age_hours: float) -> float:
-    """ニュースの経過時間による重み (0..1)。古いほど軽い。"""
-    if age_hours < 6:
-        return 1.0
-    if age_hours < 24:
-        return 0.7
-    if age_hours < 72:
-        return 0.4
-    if age_hours < 168:
-        return 0.15
+def time_decay_weight(age_hours: float, news_type: str = "commentary") -> float:
+    """ニュースの経過時間による重み (0..1)。古いほど軽い。
+
+    news_type ごとに別カーブを当てる(scheduled/breaking/commentary)。
+    未知のtypeや引数省略時は commentary カーブ(後方互換)。
+    """
+    curve = _TYPE_DECAY_CURVES.get(str(news_type).strip().lower(),
+                                   _TYPE_DECAY_CURVES['commentary'])
+    for threshold, weight in curve:
+        if age_hours < threshold:
+            return weight
     return 0.0
 
 
@@ -176,9 +204,10 @@ def calculate_alignment(news_items: list, ta_direction: int, now=None) -> dict:
             'net_direction':         float,  # -1..+1 (ニュース自体の加重方向)
             'news_direction':        str,    # 'bullish'|'bearish'|'neutral'
             'news_count':            int,
-            'high_importance_count': int,    # importance>=4 & age<24h & 方向あり
+            'high_importance_count': int,    # importance>=4 & age<24h & 方向あり & surprise!=inline
         }
 
+    重み = effective_importance × surprise係数 × time_decay_weight(age, event_type)。
     ニュース0件・全て減衰0の場合は coefficient=1.0 (中立素通り)。
     """
     if now is None:
@@ -191,25 +220,31 @@ def calculate_alignment(news_items: list, ta_direction: int, now=None) -> dict:
     for item in news_items:
         dir_value = DIRECTION_MAP.get(str(item.direction).strip().lower(), 0)
         eff_imp = _effective_importance(item.importance, item.source)
+        surprise = str(getattr(item, 'surprise', 'unknown')).strip().lower()
+        surprise_factor = SURPRISE_FACTORS.get(surprise, SURPRISE_FACTORS['unknown'])
+        event_type = getattr(item, 'event_type', 'commentary')
 
         ts = item.timestamp
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         age_hours = (now - ts).total_seconds() / 3600.0
 
-        weight = eff_imp * time_decay_weight(age_hours)
+        weight = eff_imp * surprise_factor * time_decay_weight(age_hours, event_type)
         if weight <= 0:
             continue
 
         total_w += weight
         signed_w += weight * dir_value
 
-        if eff_imp >= 4 and age_hours < 24 and dir_value != 0:
+        if eff_imp >= 4 and age_hours < 24 and dir_value != 0 and surprise != 'inline':
             high_importance_count += 1
 
+    # net_direction: 方向(正規化, -1..+1)。confidence: 量(総重みの飽和, 0..1)。
+    # 係数には confidence を掛けて量を反映。divergence判定は net_direction のみ使う(量で薄めない)。
     net_direction = (signed_w / total_w) if total_w > 0 else 0.0
-    normalized = ta_direction * net_direction
-    coefficient = max(0.3, min(1.7, 1.0 + 0.7 * normalized))
+    confidence = min(1.0, total_w / W_REF) if total_w > 0 else 0.0
+    normalized = ta_direction * net_direction  # 出力用(方向の正規化, confidence非適用)
+    coefficient = max(0.3, min(1.7, 1.0 + 0.7 * ta_direction * net_direction * confidence))
 
     if net_direction > 0:
         news_direction = 'bullish'
@@ -222,6 +257,7 @@ def calculate_alignment(news_items: list, ta_direction: int, now=None) -> dict:
         'coefficient':           round(coefficient, 3),
         'normalized':            round(normalized, 3),
         'net_direction':         round(net_direction, 3),
+        'confidence':            round(confidence, 3),
         'news_direction':        news_direction,
         'news_count':            len(news_items),
         'high_importance_count': high_importance_count,

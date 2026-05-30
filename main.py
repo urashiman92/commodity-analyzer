@@ -81,6 +81,9 @@ def load_news_items(symbol: str) -> list:
                 source=d.get("source", ""),
                 commodity=d.get("commodity", ""),
                 summary=d.get("summary", ""),
+                # 旧レコード(フィールド欠落)は最も互換な既定値で補完
+                event_type=d.get("event_type", "commentary"),
+                surprise=d.get("surprise", "unknown"),
             ))
     return items
 

@@ -1,0 +1,54 @@
+name: Verify Signals
+
+on:
+  schedule:
+    # 毎日 0:30 UTC = 9:30 JST（TA/digest とずらす）。価格照合のみ。
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify pending signals
+        run: python src/signal_verifier.py
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: Commit signal history
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add signal_pending.jsonl signal_history.jsonl signal_history_*.jsonl
+          if git diff --staged --quiet; then
+            echo "変更なし、commit不要"
+            exit 0
+          fi
+          git pull --rebase --autostash || git rebase --abort
+          git commit -m "Verify signals [skip ci]"
+          for i in 1 2 3; do
+            if git push; then
+              echo "Push成功（試行$i回目）"
+              exit 0
+            fi
+            echo "Push失敗、リトライ中（$i/3）..."
+            sleep 2
+            git pull --rebase --autostash || git rebase --abort
+          done
+          echo "Push最終的に失敗"
+          exit 1

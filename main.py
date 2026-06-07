@@ -33,6 +33,7 @@ from expectation_scorer import calc_expectation
 from news_alignment import calculate_alignment, NewsItem
 from conviction_scorer import calc_conviction, format_conviction_summary
 from notification_router import get_destination, resolve_webhook_url, channel_label
+from signal_logger import record_signal
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -203,6 +204,25 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
     destination = get_destination(conviction, symbol)
     channel_type = destination['channel_type']
     logger.info(f"  チャンネル: {channel_label(channel_type)} ({channel_type})")
+
+    # 7.5 シグナル永続記録（検証基盤・副作用）。reference以上、または --no-filter 時に記録。
+    #     失敗しても本体（通知）は止めない。price_at_signal は取得済みの終値を渡す。
+    if channel_type != 'silent' or no_filter:
+        try:
+            record_signal({
+                'symbol': name,
+                'timeframe': tf_label,
+                'ta_score': ta_expectation['score'],
+                'conviction_score': conviction['score'],
+                'coefficient': alignment['coefficient'],
+                'direction': conviction['direction'],
+                'is_divergence': conviction['is_divergence'],
+                'net_direction': alignment['net_direction'],
+                'news_count': alignment['news_count'],
+                'high_importance_count': alignment['high_importance_count'],
+            }, price_at_signal=float(df['Close'].iloc[-1]))
+        except Exception:
+            logger.warning("  ⚠ シグナル記録失敗（本体は継続）", exc_info=True)
 
     if channel_type == 'silent':
         return {'sent': False, 'has_signal': True, 'channel_type': 'silent',

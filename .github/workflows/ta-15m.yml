@@ -1,11 +1,13 @@
 name: TA Analysis (15min)
 
 on:
-  schedule:
-    # 2,17,32,47分に起動（遅延を見込んだオフセット）
-    # UTC表記: 日本時間 -9時間
-    - cron: "2,17,32,47 * * * *"
-  workflow_dispatch:  # 手動実行も可能
+  # スケジュール起動は無効化 (fix/timeframe-cleanup)。
+  # 短期足ノイズ＋Gemini無料枠(20req/日)枯渇の原因だったため自動実行を停止。
+  # 手動実行する場合は config.yaml の timeframes に "15分" ブロックを一時的に戻すこと
+  # (config に無い label は --tf で拾われず、分析対象にならない)。
+  # schedule:
+  #   - cron: "2,17,32,47 * * * *"
+  workflow_dispatch:  # 手動実行のみ
 
 jobs:
   analyze:

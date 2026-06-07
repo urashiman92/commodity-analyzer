@@ -1,10 +1,13 @@
 name: TA Analysis (1hour)
 
 on:
-  schedule:
-    # 毎時5分に起動
-    - cron: "5 * * * *"
-  workflow_dispatch:
+  # スケジュール起動は無効化 (fix/timeframe-cleanup)。
+  # 短期足ノイズ＋Gemini無料枠(20req/日)枯渇の原因だったため自動実行を停止。
+  # 手動実行する場合は config.yaml の timeframes に "1時間" ブロックを一時的に戻すこと
+  # (config に無い label は --tf で拾われず、分析対象にならない)。
+  # schedule:
+  #   - cron: "5 * * * *"
+  workflow_dispatch:  # 手動実行のみ
 
 jobs:
   analyze:

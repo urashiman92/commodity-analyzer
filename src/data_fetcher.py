@@ -48,8 +48,10 @@ def fetch_ohlcv(ticker: str, interval: str, period: str,
             df.dropna(inplace=True)
 
             # リサンプリング処理（4時間足など）
+            # pandas は頻度を小文字で要求（'4H' は廃止 → 'invalid frequency'）。
+            # config に大文字が混じっても落ちないよう正規化する。
             if resample:
-                df = df.resample(resample).agg({
+                df = df.resample(resample.lower()).agg({
                     'Open': 'first',
                     'High': 'max',
                     'Low': 'min',

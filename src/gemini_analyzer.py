@@ -20,6 +20,23 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
+# プロセス内サーキットブレーカー: RPD(日次クォータ)超過を一度検知したら、
+# この実行中の以後の Gemini 呼び出しを全スキップする（リトライしても当日中は
+# 回復しないため、待つだけ無駄かつ後続銘柄の処理を遅らせる）。
+_RPD_EXHAUSTED = False
+
+
+def reset_rpd_breaker() -> None:
+    """テスト用: RPDブレーカーをリセット。"""
+    global _RPD_EXHAUSTED
+    _RPD_EXHAUSTED = False
+
+
+def _is_rpd_error(e: Exception) -> bool:
+    """429本文から RPD(日次)超過と判別できるか。
+    実測の quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"""
+    return 'PerDay' in str(e)
+
 
 SYSTEM_PROMPT = """\
 あなたは金融のプロフェッショナルで、特にコモディティ関連のテクニカル分析に特化しています。
@@ -74,6 +91,11 @@ def analyze_with_gemini(api_key: str, model_name: str,
         失敗時 None（呼び出し側がフォールバック文で続行する。
         この返り値が conviction / routing / 記録に影響してはならない）
     """
+    global _RPD_EXHAUSTED
+    if _RPD_EXHAUSTED:
+        logger.info(f"Gemini RPD超過検知済みのためスキップ: {symbol_name}/{timeframe}")
+        return None
+
     client = genai.Client(api_key=api_key)
 
     user_prompt = f"""\
@@ -110,6 +132,13 @@ def analyze_with_gemini(api_key: str, model_name: str,
                 return _parse_response(raw)
             logger.error(f"Geminiレスポンスが空 ({attempt + 1}/{max_retries})")
         except Exception as e:
+            # RPD(日次)超過はリトライ無意味: ブレーカーを立てて即時 None。
+            # RPM(分間)超過・判別不能な429・その他は従来どおりバックオフ。
+            if _is_rpd_error(e):
+                _RPD_EXHAUSTED = True
+                logger.error(f"Gemini RPD(日次クォータ)超過を検知。"
+                             f"この実行中の以後の呼び出しを全スキップ: {e}")
+                return None
             logger.error(f"Gemini API エラー ({attempt + 1}/{max_retries}): {e}")
         # 無料枠の分間レート(5req/分=12s間隔)を尊重した指数バックオフ。
         # 最終試行の後は待たない。

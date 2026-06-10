@@ -59,7 +59,7 @@ def record_signal(signal: dict, price_at_signal: float,
         signal: 以下のキーを持つ dict（main.py が conviction/alignment から組む）:
             symbol, timeframe, ta_score, conviction_score, coefficient,
             direction, is_divergence, net_direction, news_count,
-            high_importance_count, commentary_generated
+            high_importance_count
         price_at_signal: 照合の基準点（シグナル時点の終値）
         jsonl_path: 追記先。省略時は signal["timeframe"] から解決
                     （4時間→_4h, 日足→_1d）
@@ -82,8 +82,6 @@ def record_signal(signal: dict, price_at_signal: float,
         "net_direction": signal.get("net_direction"),
         "news_count": signal.get("news_count"),
         "high_importance_count": signal.get("high_importance_count"),
-        # 解説文(Gemini)が生成できたか。数値経路とは無関係の品質モニタ用フラグ。
-        "commentary_generated": signal.get("commentary_generated", False),
         "horizons": _empty_horizons(),
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:

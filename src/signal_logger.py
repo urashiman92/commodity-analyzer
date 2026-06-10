@@ -55,6 +55,8 @@ def record_signal(signal: dict, price_at_signal: float,
         "net_direction": signal.get("net_direction"),
         "news_count": signal.get("news_count"),
         "high_importance_count": signal.get("high_importance_count"),
+        # 解説文(Gemini)が生成できたか。数値経路とは無関係の品質モニタ用フラグ。
+        "commentary_generated": signal.get("commentary_generated", False),
         "horizons": _empty_horizons(),
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:

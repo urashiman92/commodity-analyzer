@@ -64,11 +64,15 @@ def analyze_with_gemini(api_key: str, model_name: str,
                         temperature: float = 0.3,
                         max_retries: int = 3) -> dict | None:
     """
-    指標とシグナルをGeminiに投げて所見と方向判定を生成。
+    指標とシグナルをGeminiに投げて所見テキストを生成（embed用解説文専任）。
+
+    max_retries=3 は「初回 + リトライ2回」。バックオフは 15s/30s で
+    無料枠の分間レート(5req/分)を尊重する。
 
     Returns:
         {'text': str, 'direction': str, 'importance': str, 'summary': str}
-        失敗時 None
+        失敗時 None（呼び出し側がフォールバック文で続行する。
+        この返り値が conviction / routing / 記録に影響してはならない）
     """
     client = genai.Client(api_key=api_key)
 
@@ -104,9 +108,14 @@ def analyze_with_gemini(api_key: str, model_name: str,
             raw = response.text.strip()
             if raw:
                 return _parse_response(raw)
+            logger.error(f"Geminiレスポンスが空 ({attempt + 1}/{max_retries})")
         except Exception as e:
-            wait = 2 ** attempt
-            logger.error(f"Gemini API エラー ({attempt + 1}/{max_retries}): {e}, {wait}秒待機")
+            logger.error(f"Gemini API エラー ({attempt + 1}/{max_retries}): {e}")
+        # 無料枠の分間レート(5req/分=12s間隔)を尊重した指数バックオフ。
+        # 最終試行の後は待たない。
+        if attempt < max_retries - 1:
+            wait = 15 * (2 ** attempt)  # 15s, 30s
+            logger.info(f"  {wait}秒待機してリトライ")
             time.sleep(wait)
 
     return None

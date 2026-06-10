@@ -1,14 +1,18 @@
 """
 シグナル永続記録モジュール（検証基盤・書き手）
 
-analyzer 本体が出したシグナルを signal_pending.jsonl に追記する。
-- このファイルの書き手は analyzer 本体のみ（append 専用）。
-- 照合・完結判定・history への移動は signal_verifier.py（日次単独ジョブ）が担当。
-  → 「1ファイル1書き手」原則でコミット競合をゼロにする設計。
+analyzer 本体が出したシグナルを時間軸別の signal_pending_*.jsonl に追記する。
+
+書き手マップ（一ファイル一ライターの完全適用）:
+  signal_pending_4h.jsonl ← ta-4h 実行の analyzer 本体のみ（append 専用）
+  signal_pending_1d.jsonl ← ta-1d 実行の analyzer 本体のみ（append 専用）
+  signal_history.jsonl    ← verify-signals のみ（append 専用）
+pending は追記専用ログ。verifier は読み取り専用で、pending からの削除・移動は誰もしない。
 
 horizons は 1h / 24h / 72h(3日) / 168h(1週間) の4つ。
 スイング〜長期評価が本命のため 72h/168h が主軸、1h/24h は織り込み速度確認用。
 """
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -21,7 +25,24 @@ HORIZON_HOURS: dict[str, float] = {
     "168h": 168.0,
 }
 
-PENDING_PATH = "signal_pending.jsonl"
+# 時間軸ラベル → pending ファイル。書き手はそのワークフローの analyzer 本体のみ。
+# 15分/1時間は現在 schedule 無効（手動復活時のためのマッピングだけ用意）。
+TF_PENDING_FILES: dict[str, str] = {
+    "4時間": "signal_pending_4h.jsonl",
+    "日足": "signal_pending_1d.jsonl",
+    "15分": "signal_pending_15m.jsonl",
+    "1時間": "signal_pending_1h.jsonl",
+}
+
+
+def pending_path_for(timeframe: str) -> str:
+    """時間軸ラベルから pending ファイル名を解決。未知ラベルは other に隔離。"""
+    return TF_PENDING_FILES.get(timeframe, "signal_pending_other.jsonl")
+
+
+def make_signal_id(timestamp: str, symbol: str, timeframe: str) -> str:
+    """シグナルのユニークキー。verifier の idempotency（history 既載スキップ）に使う。"""
+    return hashlib.sha1(f"{timestamp}|{symbol}|{timeframe}".encode("utf-8")).hexdigest()
 
 
 def _empty_horizons() -> dict:
@@ -31,19 +52,25 @@ def _empty_horizons() -> dict:
 
 
 def record_signal(signal: dict, price_at_signal: float,
-                  jsonl_path: str = PENDING_PATH) -> None:
-    """1シグナルを pending JSONL に1行追記する。
+                  jsonl_path: str | None = None) -> None:
+    """1シグナルを時間軸別 pending JSONL に1行追記する。
 
     Args:
         signal: 以下のキーを持つ dict（main.py が conviction/alignment から組む）:
             symbol, timeframe, ta_score, conviction_score, coefficient,
             direction, is_divergence, net_direction, news_count,
-            high_importance_count
+            high_importance_count, commentary_generated
         price_at_signal: 照合の基準点（シグナル時点の終値）
-        jsonl_path: 追記先（既定 signal_pending.jsonl）
+        jsonl_path: 追記先。省略時は signal["timeframe"] から解決
+                    （4時間→_4h, 日足→_1d）
     """
+    if jsonl_path is None:
+        jsonl_path = pending_path_for(signal.get("timeframe", ""))
+    ts = datetime.now(timezone.utc).isoformat()
     record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "signal_id": make_signal_id(ts, signal.get("symbol", ""),
+                                    signal.get("timeframe", "")),
+        "timestamp": ts,
         "symbol": signal.get("symbol"),
         "timeframe": signal.get("timeframe"),
         "price_at_signal": float(price_at_signal),

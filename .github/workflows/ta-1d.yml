@@ -6,6 +6,9 @@ on:
     - cron: "10 23 * * 1-5"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -36,3 +39,28 @@ jobs:
           WEBHOOK_DIVERGENCE:   ${{ secrets.WEBHOOK_DIVERGENCE }}
           WEBHOOK_REFERENCE:    ${{ secrets.WEBHOOK_REFERENCE }}
           PYTHONIOENCODING:     utf-8
+
+      - name: Commit signal_pending_1d.jsonl
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # このファイルの書き手は本ワークフローのみ。4h/1d/verify は互いに別ファイルを
+          # 書くため、同時pushになっても rebase が必ず通る（一ファイル一ライター設計前提）。
+          git add signal_pending_1d.jsonl
+          if git diff --staged --quiet; then
+            echo "変更なし、commit不要"
+            exit 0
+          fi
+          git pull --rebase --autostash || git rebase --abort
+          git commit -m "Record daily signals [skip ci]"
+          for i in 1 2 3; do
+            if git push; then
+              echo "Push成功（試行$i回目）"
+              exit 0
+            fi
+            echo "Push失敗、リトライ中（$i/3）..."
+            sleep 2
+            git pull --rebase --autostash || git rebase --abort
+          done
+          echo "Push最終的に失敗"
+          exit 1

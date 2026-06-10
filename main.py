@@ -32,8 +32,9 @@ from discord_notifier import send_to_discord
 from expectation_scorer import calc_expectation
 from news_alignment import calculate_alignment, NewsItem
 from conviction_scorer import calc_conviction, format_conviction_summary
-from notification_router import get_destination, resolve_webhook_url, channel_label
-from signal_logger import record_signal
+from notification_router import (get_destination, resolve_webhook_url,
+                                 channel_label, should_notify)
+from signal_logger import record_signal, pending_path_for
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -183,9 +184,10 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
     channel_type = destination['channel_type']
     logger.info(f"  チャンネル: {channel_label(channel_type)} ({channel_type})")
 
-    # シグナル永続記録（検証基盤・副作用）。reference以上、または --no-filter 時に記録。
-    # 失敗しても本体（通知）は止めない。price_at_signal は取得済みの終値を渡す。
-    def _record(commentary_generated: bool):
+    # 6.5 シグナル永続記録（routing 決定直後・Gemini 呼び出しより前）。
+    #     Gemini リトライ中にジョブが死んでも記録が残るよう、LLM より先に書く。
+    #     reference以上、または --no-filter 時に記録。失敗しても本体は止めない。
+    if channel_type != 'silent' or no_filter:
         try:
             record_signal({
                 'symbol': name,
@@ -198,15 +200,15 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
                 'net_direction': alignment['net_direction'],
                 'news_count': alignment['news_count'],
                 'high_importance_count': alignment['high_importance_count'],
-                'commentary_generated': commentary_generated,
             }, price_at_signal=float(df['Close'].iloc[-1]))
+            logger.info(f"  記録: {pending_path_for(tf_label)}")
         except Exception:
             logger.warning("  ⚠ シグナル記録失敗（本体は継続）", exc_info=True)
 
-    if channel_type == 'silent':
-        if no_filter:
-            _record(commentary_generated=False)
-        return {'sent': False, 'has_signal': True, 'channel_type': 'silent',
+    # silent は通知なし。reference 帯は通知スキップ・記録のみに格下げ
+    # （Gemini 解説の生成対象は routing=commodity/critical/divergence のみ）。
+    if not should_notify(channel_type):
+        return {'sent': False, 'has_signal': True, 'channel_type': channel_type,
                 'error': None}
 
     # 7. Gemini解説文生成（通知確定後のみ呼ぶ。embed 用テキスト専任）
@@ -232,8 +234,6 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
     else:
         analysis_text = "(TA所見の生成に失敗)"
         logger.warning("  ⚠ 解説文生成失敗 → フォールバック文で続行")
-
-    _record(commentary_generated=gemini_result is not None)
 
     if dry_run:
         conviction_summary = format_conviction_summary(conviction)

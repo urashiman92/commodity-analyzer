@@ -5,8 +5,8 @@
   ダイバージェンス          → WEBHOOK_DIVERGENCE  (TA/ニュース逆向き)
   |確信度| >= 60            → WEBHOOK_CRITICAL    (重大シグナル)
   |確信度| >= 30            → 銘柄別Webhook        (既存チャンネル)
-  15 <= |確信度| < 30       → WEBHOOK_REFERENCE   (参考情報、ミュート推奨)
-  |確信度| < 15             → None                 (通知しない)
+  15 <= |確信度| < 30       → reference (通知スキップ・シグナル記録のみ)
+  |確信度| < 15             → silent    (通知も記録もしない)
 """
 import os
 
@@ -18,7 +18,6 @@ THRESHOLDS = {
 
 WEBHOOK_CRITICAL_ENV   = 'WEBHOOK_CRITICAL'
 WEBHOOK_DIVERGENCE_ENV = 'WEBHOOK_DIVERGENCE'
-WEBHOOK_REFERENCE_ENV  = 'WEBHOOK_REFERENCE'
 
 
 def get_destination(conviction: dict, symbol: dict) -> dict:
@@ -45,9 +44,19 @@ def get_destination(conviction: dict, symbol: dict) -> dict:
         return {'webhook_env': symbol['webhook_env'], 'channel_type': 'commodity'}
 
     if abs_score >= THRESHOLDS['reference']:
-        return {'webhook_env': WEBHOOK_REFERENCE_ENV, 'channel_type': 'reference'}
+        # reference帯は通知せず記録のみ（webhookなし）
+        return {'webhook_env': None, 'channel_type': 'reference'}
 
     return {'webhook_env': None, 'channel_type': 'silent'}
+
+
+def should_notify(channel_type: str) -> bool:
+    """Discord通知（およびGemini解説文生成）を行う routing か。
+
+    reference は記録のみに格下げ（通知スキップ）。silent は記録も通知もなし
+    （--no-filter 時の記録は呼び出し側の判断）。
+    """
+    return channel_type in ('commodity', 'critical', 'divergence')
 
 
 def resolve_webhook_url(destination: dict) -> str | None:

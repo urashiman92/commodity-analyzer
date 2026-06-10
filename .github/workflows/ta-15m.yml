@@ -37,5 +37,4 @@ jobs:
           WEBHOOK_COPPER:       ${{ secrets.WEBHOOK_COPPER }}
           WEBHOOK_CRITICAL:     ${{ secrets.WEBHOOK_CRITICAL }}
           WEBHOOK_DIVERGENCE:   ${{ secrets.WEBHOOK_DIVERGENCE }}
-          WEBHOOK_REFERENCE:    ${{ secrets.WEBHOOK_REFERENCE }}
           PYTHONIOENCODING:     utf-8

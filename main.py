@@ -166,7 +166,51 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
     logger.info(f"  TA期待度: {ta_expectation['score']:+.1f} ({ta_expectation['direction']})"
                 f"  内訳: {ta_expectation['components']}")
 
-    # 5. Gemini分析 (direction付きJSON)
+    # 5. ニュース整合性係数 + 確信度スコア（決定論: TA指標＋ニュース整合性のみ）
+    #    LLMはこの経路に一切関与しない。Gemini失敗がシグナル記録の欠損を生まないように、
+    #    解説文生成（Gemini）は routing 確定後の step 7 まで遅延させる。
+    news_items = load_news_items(name)
+    ta_score = ta_expectation['score']
+    ta_direction = 1 if ta_score > 0 else (-1 if ta_score < 0 else 0)
+    alignment = calculate_alignment(news_items, ta_direction)
+    conviction = calc_conviction(ta_expectation, alignment)
+    logger.info(f"  確信度: {conviction['score']:+.1f}  係数: {alignment['coefficient']:.2f}"
+                f"  ニュース: {alignment['news_count']}件(重要{alignment['high_importance_count']})"
+                f"  divergence: {conviction['is_divergence']}")
+
+    # 6. ルーティング（決定論）
+    destination = get_destination(conviction, symbol)
+    channel_type = destination['channel_type']
+    logger.info(f"  チャンネル: {channel_label(channel_type)} ({channel_type})")
+
+    # シグナル永続記録（検証基盤・副作用）。reference以上、または --no-filter 時に記録。
+    # 失敗しても本体（通知）は止めない。price_at_signal は取得済みの終値を渡す。
+    def _record(commentary_generated: bool):
+        try:
+            record_signal({
+                'symbol': name,
+                'timeframe': tf_label,
+                'ta_score': ta_expectation['score'],
+                'conviction_score': conviction['score'],
+                'coefficient': alignment['coefficient'],
+                'direction': conviction['direction'],
+                'is_divergence': conviction['is_divergence'],
+                'net_direction': alignment['net_direction'],
+                'news_count': alignment['news_count'],
+                'high_importance_count': alignment['high_importance_count'],
+                'commentary_generated': commentary_generated,
+            }, price_at_signal=float(df['Close'].iloc[-1]))
+        except Exception:
+            logger.warning("  ⚠ シグナル記録失敗（本体は継続）", exc_info=True)
+
+    if channel_type == 'silent':
+        if no_filter:
+            _record(commentary_generated=False)
+        return {'sent': False, 'has_signal': True, 'channel_type': 'silent',
+                'error': None}
+
+    # 7. Gemini解説文生成（通知確定後のみ呼ぶ。embed 用テキスト専任）
+    #    失敗してもフォールバック文で通知し、記録・routing には一切影響しない。
     is_short_tf = timeframe['label'] in ('15分', '1時間')
     model_name = (config['gemini']['model_short']
                   if is_short_tf else config['gemini']['model_long'])
@@ -182,51 +226,14 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
         temperature=config['gemini']['temperature'],
     )
 
-    if not gemini_result:
-        return {'sent': False, 'has_signal': True, 'channel_type': 'silent',
-                'error': 'Gemini分析失敗'}
+    if gemini_result:
+        analysis_text = gemini_result['text']
+        logger.info(f"  解説文: {len(analysis_text)}文字")
+    else:
+        analysis_text = "(TA所見の生成に失敗)"
+        logger.warning("  ⚠ 解説文生成失敗 → フォールバック文で続行")
 
-    analysis_text = gemini_result['text']
-    logger.info(f"  Gemini方向: {gemini_result['direction']}  分析テキスト: {len(analysis_text)}文字")
-
-    # 6. ニュース整合性係数 + 確信度スコア
-    #    実ニュース(news-bot由来)を集約して係数算出。ニュース0件なら係数1.00(中立素通り)。
-    news_items = load_news_items(name)
-    ta_score = ta_expectation['score']
-    ta_direction = 1 if ta_score > 0 else (-1 if ta_score < 0 else 0)
-    alignment = calculate_alignment(news_items, ta_direction)
-    conviction = calc_conviction(ta_expectation, alignment)
-    logger.info(f"  確信度: {conviction['score']:+.1f}  係数: {alignment['coefficient']:.2f}"
-                f"  ニュース: {alignment['news_count']}件(重要{alignment['high_importance_count']})"
-                f"  divergence: {conviction['is_divergence']}")
-
-    # 7. ルーティング
-    destination = get_destination(conviction, symbol)
-    channel_type = destination['channel_type']
-    logger.info(f"  チャンネル: {channel_label(channel_type)} ({channel_type})")
-
-    # 7.5 シグナル永続記録（検証基盤・副作用）。reference以上、または --no-filter 時に記録。
-    #     失敗しても本体（通知）は止めない。price_at_signal は取得済みの終値を渡す。
-    if channel_type != 'silent' or no_filter:
-        try:
-            record_signal({
-                'symbol': name,
-                'timeframe': tf_label,
-                'ta_score': ta_expectation['score'],
-                'conviction_score': conviction['score'],
-                'coefficient': alignment['coefficient'],
-                'direction': conviction['direction'],
-                'is_divergence': conviction['is_divergence'],
-                'net_direction': alignment['net_direction'],
-                'news_count': alignment['news_count'],
-                'high_importance_count': alignment['high_importance_count'],
-            }, price_at_signal=float(df['Close'].iloc[-1]))
-        except Exception:
-            logger.warning("  ⚠ シグナル記録失敗（本体は継続）", exc_info=True)
-
-    if channel_type == 'silent':
-        return {'sent': False, 'has_signal': True, 'channel_type': 'silent',
-                'error': None}
+    _record(commentary_generated=gemini_result is not None)
 
     if dry_run:
         conviction_summary = format_conviction_summary(conviction)
@@ -243,9 +250,9 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
         return {'sent': False, 'has_signal': True, 'channel_type': channel_type,
                 'error': f"環境変数 {env_key} 未設定"}
 
-    # importanceはGeminiとTA複合シグナル数の強い方を採用
+    # 表示上のimportance: GeminiとTA複合シグナル数の強い方（Gemini失敗時はTAのみ）
     effective_importance = (
-        'high' if (gemini_result['importance'] == 'high'
+        'high' if ((gemini_result and gemini_result['importance'] == 'high')
                    or signal_result['importance'] == 'high')
         else 'normal'
     )

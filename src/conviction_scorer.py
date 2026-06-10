@@ -11,7 +11,7 @@ def calc_conviction(ta_expectation: dict, news_alignment: dict) -> dict:
     """
     Args:
         ta_expectation: expectation_scorer.calc_expectation() の出力
-        news_alignment: news_alignment.calc_alignment_coefficient() の出力
+        news_alignment: news_alignment.calculate_alignment() の出力
 
     Returns:
         {

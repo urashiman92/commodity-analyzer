@@ -34,7 +34,12 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add signal_pending.jsonl signal_history.jsonl signal_history_*.jsonl
+          # 書き手は本ワークフローのみ（history と月次アーカイブ）。pending は読み取り専用なので add しない。
+          # アーカイブは存在する時だけ add（globが解決されず pathspec エラーになる事故の再発防止）。
+          git add signal_history.jsonl
+          for f in signal_history_*.jsonl; do
+            [ -e "$f" ] && git add "$f"
+          done
           if git diff --staged --quiet; then
             echo "変更なし、commit不要"
             exit 0

@@ -42,16 +42,19 @@ _CACHE = {"computed": False, "value": None}
 
 
 def _fetch_close_chain(tickers: list, period: str = "6mo",
-                       min_bars: int = 70) -> pd.Series | None:
+                       min_bars: int = 70,
+                       auto_adjust: bool = False) -> pd.Series | None:
     """日足Closeをフォールバック連鎖で取得。全滅なら None。
 
     min_bars=70: 60日トレンド算出(61本)+余裕。CNH=X が1本しか返さない事故を
     ここで自然に弾く（実測: CNH=X/USDCNH=X は1本 → CNY=X で代替）。
+    auto_adjust: 分配のあるETF(TIP等)は True（調整後終値）を指定すること。
+    未調整だと分配落ちの階段下落が trend 符号を騙す。指数/FXはどちらでも同じ。
     """
     for t in tickers:
         try:
             df = yf.download(t, interval="1d", period=period,
-                             progress=False, auto_adjust=False)
+                             progress=False, auto_adjust=auto_adjust)
             if df is None or df.empty:
                 continue
             if isinstance(df.columns, pd.MultiIndex):
@@ -122,7 +125,9 @@ def _compute() -> dict | None:
         ry_trend = _trend(ry)
         ry_chg = _diff_chg20d(ry)  # パーセントポイント
     else:
-        tip = _fetch_close_chain(["TIP"])
+        # TIP は月次分配ETF: 未調整終値は分配落ちで階段下落し、逆相関プロキシの
+        # trend 符号を「実質金利上昇」側へ系統的に騙すため、調整後終値を使う。
+        tip = _fetch_close_chain(["TIP"], auto_adjust=True)
         if tip is not None:
             ry_source = "TIP_proxy"
             t = _trend(tip)

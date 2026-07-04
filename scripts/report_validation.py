@@ -199,6 +199,42 @@ def section_divergence(recs):
     print("| ニュース方向 | " + " | ".join(hit_cell(div, hz, news_hit) for hz in HORIZONS) + " |")
 
 
+def _news_group(rec):
+    """v1.2 ニュース層帰属テストの群分け（protocol §10 の定義と同一に保つ）。
+
+    normalized は記録に無いため式を固定して導出: sign(ta_score) × net_direction。
+    """
+    if rec.get("is_divergence"):
+        return None  # divergence は対象外
+    if not (rec.get("news_count") or 0):
+        return "無風"  # news_count=0（中立に含めず別掲）
+    ta = rec.get("ta_score") or 0
+    sign = (ta > 0) - (ta < 0)
+    normalized = sign * (rec.get("net_direction") or 0)
+    if normalized >= 0.2:
+        return "増幅"
+    if normalized <= -0.2:
+        return "減衰"
+    return "中立"
+
+
+def section_news_attribution(recs):
+    """v1.2: ニュース層帰属テスト（減衰 < 中立 < 増幅 の単調性を検証する集計）。"""
+    print("\n## ニュース層帰属（v1.2・divergence除外）\n")
+    print("事前予測: 168h 方向一致率が 減衰 < 中立 < 増幅（本判定は各群 n>=100）。"
+          "無風(news_count=0)は参考別掲。\n")
+    groups = {"増幅": [], "中立": [], "減衰": [], "無風": []}
+    for r in recs:
+        g = _news_group(r)
+        if g:
+            groups[g].append(r)
+    print("| 群 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    for g in ("減衰", "中立", "増幅", "無風"):
+        cells = [hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS]
+        print(f"| {g} | " + " | ".join(cells) + " |")
+
+
 def section_coverage(pending, history):
     print("\n## カバレッジ（記録件数: pending=未確定 + history=確定）\n")
     combos = {}
@@ -247,6 +283,7 @@ def main():
         section_return_table(sub, f"timeframe = {tf}")
 
     section_divergence(history)
+    section_news_attribution(history)
     section_coverage(pending, history)
 
 

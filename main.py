@@ -35,6 +35,7 @@ from conviction_scorer import calc_conviction, format_conviction_summary
 from notification_router import (get_destination, resolve_webhook_url,
                                  channel_label, should_notify)
 from signal_logger import record_signal, pending_path_for
+from macro_alignment import get_macro_state
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -200,6 +201,9 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
                 'net_direction': alignment['net_direction'],
                 'news_count': alignment['news_count'],
                 'high_importance_count': alignment['high_importance_count'],
+                # shadow: マクロレジーム（記録のみ・conviction/routing不適用）。
+                # プロセス内1回算出のキャッシュ。全ソース失敗時は None (= null で記録)。
+                'macro': get_macro_state(),
             }, price_at_signal=float(df['Close'].iloc[-1]))
             logger.info(f"  記録: {pending_path_for(tf_label)}")
         except Exception:

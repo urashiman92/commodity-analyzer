@@ -36,6 +36,7 @@ from notification_router import (get_destination, resolve_webhook_url,
                                  channel_label, should_notify)
 from signal_logger import record_signal, pending_path_for
 from macro_alignment import get_macro_state
+from cot_alignment import get_cot_state
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -204,6 +205,9 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
                 # shadow: マクロレジーム（記録のみ・conviction/routing不適用）。
                 # プロセス内1回算出のキャッシュ。全ソース失敗時は None (= null で記録)。
                 'macro': get_macro_state(),
+                # shadow: CoT（cot_state.json のローカル読みのみ・ネットワーク不使用）。
+                # ファイル欠損・銘柄なしは None (= null で記録)。
+                'cot': get_cot_state(name),
             }, price_at_signal=float(df['Close'].iloc[-1]))
             logger.info(f"  記録: {pending_path_for(tf_label)}")
         except Exception:

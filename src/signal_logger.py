@@ -84,6 +84,8 @@ def record_signal(signal: dict, price_at_signal: float,
         "high_importance_count": signal.get("high_importance_count"),
         # shadow: マクロレジーム（Phase1）。記録のみで数値経路に不介在。取得失敗時 null。
         "macro": signal.get("macro"),
+        # shadow: CoT（Phase2）。同上。state欠損・銘柄なしは null。
+        "cot": signal.get("cot"),
         "horizons": _empty_horizons(),
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:

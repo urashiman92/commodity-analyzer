@@ -18,6 +18,7 @@ import math
 import os
 import statistics
 import sys
+from datetime import datetime
 
 HORIZONS = ["1h", "24h", "72h", "168h"]
 BUCKETS = ["critical", "normal", "reference", "other", "divergence"]
@@ -197,6 +198,44 @@ def section_divergence(recs):
     print("|---|" + "---|" * len(HORIZONS))
     print("| TA方向 | " + " | ".join(hit_cell(div, hz, ta_hit) for hz in HORIZONS) + " |")
     print("| ニュース方向 | " + " | ".join(hit_cell(div, hz, news_hit) for hz in HORIZONS) + " |")
+    conservative_table(div, lambda r: "divergence", ["divergence"], "divergence両面",
+                       hit_fns=[("TA方向 168h", ta_hit), ("ニュース方向 168h", news_hit)])
+
+
+def dedup_weekly(recs):
+    """v1.5 保守集計: symbol×ISO週で時系列最初の1件に絞る（timeframe混合）。
+
+    近接シグナルの168hウィンドウ重複による実効nの過大評価を補正する。
+    厳格化方向のみ（protocol §12）。
+    """
+    out = {}
+    for r in sorted(recs, key=lambda x: x.get("timestamp") or ""):
+        try:
+            ts = datetime.fromisoformat(r["timestamp"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        iso = ts.isocalendar()
+        key = (r.get("symbol"), iso[0], iso[1])
+        if key not in out:
+            out[key] = r
+    return list(out.values())
+
+
+def conservative_table(recs, group_fn, group_labels, title, hit_fns=None):
+    """v1.5 保守集計の併記テーブル（主軸168hのみ）。
+
+    group_fn: rec→ラベル（対象外は None）。hit_fns: [(列名, hit関数)]。
+    """
+    if hit_fns is None:
+        hit_fns = [("168h", ta_hit)]
+    ded = dedup_weekly(recs)
+    print(f"\n#### {title}（保守集計 v1.5: symbol×ISO週 最初の1件・timeframe混合）\n")
+    print("| 群 | " + " | ".join(n for n, _ in hit_fns) + " |")
+    print("|---|" + "---|" * len(hit_fns))
+    for g in group_labels:
+        sub = [r for r in ded if group_fn(r) == g]
+        cells = [hit_cell(sub, "168h", fn) for _, fn in hit_fns]
+        print(f"| {g} | " + " | ".join(cells) + " |")
 
 
 def _news_group(rec):
@@ -233,6 +272,8 @@ def section_news_attribution(recs):
     for g in ("減衰", "中立", "増幅", "無風"):
         cells = [hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS]
         print(f"| {g} | " + " | ".join(cells) + " |")
+    conservative_table(recs, _news_group, ["減衰", "中立", "増幅", "無風"],
+                       "ニュース層帰属")
 
 
 def section_coverage(pending, history):
@@ -270,8 +311,12 @@ def main():
     print(f"- 確定レコード(history): {len(history)} / 未確定(pending): {len(pending)}")
     print(f"- 本判定は各バケット n>={N_FULL}。n>={N_INTERIM} は interim（判断材料にしない）。")
 
+    print(f"\n- v1.5 重複ウィンドウ補正: 全ての本判定は「主集計で基準充足 かつ "
+          f"保守集計（symbol×ISO週の最初の1件）で序列保存」の場合のみ合格。")
+
     print("\n## 方向一致率（Wilson 95%CI）")
     section_hit_table(history, "全 timeframe 合算")
+    conservative_table(history, bucket_of, BUCKETS, "バケット別")
     for tf in ("4時間", "日足"):
         sub = [r for r in history if r.get("timeframe") == tf]
         section_hit_table(sub, f"timeframe = {tf}")

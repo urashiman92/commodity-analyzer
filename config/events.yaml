@@ -11,11 +11,12 @@
 #   3. Grain Stocks / Crop Progress の年間日程: NASS公式ICS
 #      https://www.nass.usda.gov/Publications/Calendar/2026/NassReleases2026.ics
 #      （翌年分は年末に /Calendar/YYYY/ 配下を確認）
-#   4. 米雇用統計: https://www.bls.gov/schedule/news_release/empsit.htm
-#      ※2026-07-11時点で bls.gov はローカル403/WebFetch403で機械取得不可。
-#        ブラウザで手動確認して追記すること（下の TODO 参照）。
-#   5. OPEC: https://www.opec.org/ （同上403系。手動確認して追記。下の TODO 参照）
-#   6. 祝日リスト（us_federal_holidays）は年1回、翌年分を追加。
+#   4. 米雇用統計 / OPEC: bls.gov・opec.org は【この環境（Code）から両経路403】で
+#      機械取得不可。公式スケジュールの確認は【チャット側Claude（Web到達可）に依頼
+#      →確定日時を受領→ここに追記】のループで行う（毎月の更新時に依頼すること）。
+#      参照URL: https://www.bls.gov/schedule/news_release/empsit.htm /
+#               https://www.opec.org/（プレスリリースの会合告知）
+#   5. 祝日リスト（us_federal_holidays）は年1回、翌年分を追加。
 #
 # ■ window_before_h / window_after_h のデフォルト(12h/2h)は
 #   protocol v1.4 の群定義の一部。変更する場合は protocol に新版を追記すること。
@@ -73,10 +74,28 @@ events:
     datetime_utc: "2026-09-30T16:00:00+00:00"
     symbols: [小麦, トウモロコシ, 大豆]
 
-  # TODO(未確認・推測禁止のため未登録): 米雇用統計
-  #   bls.gov がローカル403 / WebFetch403 で公式確認不可（2026-07-11時点）。
-  #   ブラウザで https://www.bls.gov/schedule/news_release/empsit.htm を確認し、
-  #   8:30 ET を UTC 変換のうえ symbols: 全6銘柄 で追記すること。
-  # TODO(未確認・推測禁止のため未登録): OPEC会合
-  #   opec.org がローカル403 / WebFetch402 で公式確認不可（2026-07-11時点）。
-  #   公式サイトで会合日を確認し symbols: [WTI原油] で追記すること。
+  # --- 米雇用統計（8:30 ET = 12:30 UTC[EDT期間]）---
+  # 出典: bls.gov/schedule/news_release/empsit.htm（チャット側Claudeで確認・2026-07-11受領）
+  - name: "米雇用統計"
+    datetime_utc: "2026-08-07T12:30:00+00:00"
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  - name: "米雇用統計"
+    datetime_utc: "2026-09-04T12:30:00+00:00"
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  - name: "米雇用統計"
+    datetime_utc: "2026-10-02T12:30:00+00:00"
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+
+  # --- OPEC会合 ---
+  # 出典: opec.org プレスリリース 2026-07-05（チャット側Claudeで確認）。
+  # アンカー規約: OPEC系会合は正確な発表時刻が事前に定まらない（週末開催・
+  # 決定の発表タイミングが会合進行次第）ため、会合日の 12:00Z を名目アンカーとし、
+  # 個別ウィンドウ before=48h / after=36h で会合前後の不確実期間全体を覆う。
+  # デフォルト(12h/2h)と異なる幅は本エントリ固有の規約（protocol v1.4 の
+  # 群定義はウィンドウ内/外の判定にのみ依存するため定義変更には当たらない）。
+  # 9月分の会合日は 8/2 の会合後PRで告知される見込み → 月次更新で追記。
+  - name: "OPEC会合"
+    datetime_utc: "2026-08-02T12:00:00+00:00"
+    symbols: [WTI原油]
+    window_before_h: 48
+    window_after_h: 36

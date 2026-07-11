@@ -276,6 +276,37 @@ def section_news_attribution(recs):
                        "ニュース層帰属")
 
 
+def _event_group(rec):
+    """v1.4 イベントゲート適用テストの群分け（protocol §13 と同一に保つ）。
+
+    event_gate が dict でない（旧レコード欠落・yaml不読null）は判定対象外（None）。
+    """
+    eg = rec.get("event_gate")
+    if not isinstance(eg, dict):
+        return None
+    if eg.get("pre"):
+        return "pre"
+    if eg.get("post"):
+        return "post(除外・参考)"
+    return "ウィンドウ外"
+
+
+def section_event_gate(recs):
+    """v1.4: イベントゲート適用テスト（pre群 vs 完全ウィンドウ外群）。"""
+    print("\n## イベントゲート（v1.4・event_gate=null/欠落は対象外）\n")
+    print("事前予測: pre群の 168h 一致率がウィンドウ外群より劣後（本判定は各群 n>=100・"
+          "CI非重複の劣後で routing 1段階格下げを検討。適用は別途承認）。"
+          "post内は比較から除外（参考別掲）。\n")
+    labels = ["pre", "ウィンドウ外", "post(除外・参考)"]
+    print("| 群 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    groups = {g: [r for r in recs if _event_group(r) == g] for g in labels}
+    for g in labels:
+        cells = [hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS]
+        print(f"| {g} | " + " | ".join(cells) + " |")
+    conservative_table(recs, _event_group, labels, "イベントゲート")
+
+
 def section_coverage(pending, history):
     print("\n## カバレッジ（記録件数: pending=未確定 + history=確定）\n")
     combos = {}
@@ -329,6 +360,7 @@ def main():
 
     section_divergence(history)
     section_news_attribution(history)
+    section_event_gate(history)
     section_coverage(pending, history)
 
 

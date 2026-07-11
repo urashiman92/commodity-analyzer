@@ -1,0 +1,82 @@
+# =====================================================
+# イベントゲート定義（Phase3 shadow）
+# =====================================================
+# このファイルは【人手編集のみ】。ジョブ/コードは読み取り専用（書き手なし）。
+#
+# ■ 月1回の手動更新手順（毎月WASDE後にまとめて実施を推奨）:
+#   1. FOMC:  https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+#      → 声明は2日目 14:00 ET。EDT(3-11月)=UTC-4 / EST=UTC-5 で datetime_utc に変換。
+#   2. WASDE: https://www.usda.gov/about-usda/general-information/staff-offices/office-chief-economist/commodity-markets/wasde-report
+#      → ページ内に年間日程の明記あり。12:00 ET。
+#   3. Grain Stocks / Crop Progress の年間日程: NASS公式ICS
+#      https://www.nass.usda.gov/Publications/Calendar/2026/NassReleases2026.ics
+#      （翌年分は年末に /Calendar/YYYY/ 配下を確認）
+#   4. 米雇用統計: https://www.bls.gov/schedule/news_release/empsit.htm
+#      ※2026-07-11時点で bls.gov はローカル403/WebFetch403で機械取得不可。
+#        ブラウザで手動確認して追記すること（下の TODO 参照）。
+#   5. OPEC: https://www.opec.org/ （同上403系。手動確認して追記。下の TODO 参照）
+#   6. 祝日リスト（us_federal_holidays）は年1回、翌年分を追加。
+#
+# ■ window_before_h / window_after_h のデフォルト(12h/2h)は
+#   protocol v1.4 の群定義の一部。変更する場合は protocol に新版を追記すること。
+
+defaults:
+  window_before_h: 12
+  window_after_h: 2
+
+# 連邦祝日（ルール自動生成の祝日シフト判定に使用。暦規則で決まる確定日）
+# 検証アンカー: 2026-09-07(レイバーデー月曜) → NASS公式ICSでも Crop Progress が
+# 9/8(火)に登載されており、シフトルールと公式日程の一致を確認済み。
+us_federal_holidays:
+  - 2026-07-03   # 独立記念日(振替金曜)
+  - 2026-09-07   # レイバーデー(月)
+  - 2026-10-12   # コロンブスデー(月)
+  - 2026-11-11   # 復員軍人の日(水)
+  - 2026-11-26   # 感謝祭(木)
+  - 2026-12-25   # クリスマス(金)
+
+# ルール自動生成（ロジックは src/event_gate.py が実装。ここは定義の宣言）
+recurring:
+  - name: "EIA週次石油在庫"
+    rule: eia_weekly        # 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜11:00 ET
+    symbols: [WTI原油]
+  - name: "Crop Progress"
+    rule: crop_progress     # 月曜16:00 ET・4〜11月のみ。月曜祝日 → 火曜16:00 ET
+    symbols: [小麦, トウモロコシ, 大豆]
+
+# 手動登録（公式スケジュールページで確認済みの確定日時のみ。推測禁止）
+events:
+  # --- FOMC声明（2日目 14:00 ET = 18:00 UTC[EDT期間]）: federalreserve.gov で確認 ---
+  - name: "FOMC声明"
+    datetime_utc: "2026-07-29T18:00:00+00:00"
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  - name: "FOMC声明"
+    datetime_utc: "2026-09-16T18:00:00+00:00"   # SEP同時公表回
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  - name: "FOMC声明"
+    datetime_utc: "2026-10-28T18:00:00+00:00"
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+
+  # --- WASDE（12:00 ET = 16:00 UTC[EDT期間]）: usda.gov 年間日程で確認 ---
+  - name: "WASDE"
+    datetime_utc: "2026-08-12T16:00:00+00:00"
+    symbols: [小麦, トウモロコシ, 大豆]
+  - name: "WASDE"
+    datetime_utc: "2026-09-11T16:00:00+00:00"
+    symbols: [小麦, トウモロコシ, 大豆]
+  - name: "WASDE"
+    datetime_utc: "2026-10-09T16:00:00+00:00"
+    symbols: [小麦, トウモロコシ, 大豆]
+
+  # --- Grain Stocks（12:00 ET = 16:00 UTC[EDT期間]）: NASS公式ICSで確認 ---
+  - name: "Grain Stocks"
+    datetime_utc: "2026-09-30T16:00:00+00:00"
+    symbols: [小麦, トウモロコシ, 大豆]
+
+  # TODO(未確認・推測禁止のため未登録): 米雇用統計
+  #   bls.gov がローカル403 / WebFetch403 で公式確認不可（2026-07-11時点）。
+  #   ブラウザで https://www.bls.gov/schedule/news_release/empsit.htm を確認し、
+  #   8:30 ET を UTC 変換のうえ symbols: 全6銘柄 で追記すること。
+  # TODO(未確認・推測禁止のため未登録): OPEC会合
+  #   opec.org がローカル403 / WebFetch402 で公式確認不可（2026-07-11時点）。
+  #   公式サイトで会合日を確認し symbols: [WTI原油] で追記すること。

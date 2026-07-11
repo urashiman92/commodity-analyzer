@@ -37,6 +37,7 @@ from notification_router import (get_destination, resolve_webhook_url,
 from signal_logger import record_signal, pending_path_for
 from macro_alignment import get_macro_state
 from cot_alignment import get_cot_state
+from event_gate import get_event_gate
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -208,6 +209,9 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
                 # shadow: CoT（cot_state.json のローカル読みのみ・ネットワーク不使用）。
                 # ファイル欠損・銘柄なしは None (= null で記録)。
                 'cot': get_cot_state(name),
+                # shadow: イベントゲート（config/events.yaml のローカル読みのみ）。
+                # ウィンドウ外は pre/post 空配列。yaml 不読は None (= null で記録)。
+                'event_gate': get_event_gate(name),
             }, price_at_signal=float(df['Close'].iloc[-1]))
             logger.info(f"  記録: {pending_path_for(tf_label)}")
         except Exception:

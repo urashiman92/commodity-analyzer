@@ -86,6 +86,8 @@ def record_signal(signal: dict, price_at_signal: float,
         "macro": signal.get("macro"),
         # shadow: CoT（Phase2）。同上。state欠損・銘柄なしは null。
         "cot": signal.get("cot"),
+        # shadow: イベントゲート（Phase3）。ウィンドウ外は空配列、yaml不読は null。
+        "event_gate": signal.get("event_gate"),
         "horizons": _empty_horizons(),
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:

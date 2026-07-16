@@ -49,3 +49,14 @@
 ## 総合判定: **不合格**
 
 不合格項目は上表参照。代替データ源候補（実装しない）: ①CME公式 delayed 決済値 ②Nasdaq Data Link ③barchart（要契約）
+
+---
+
+## 後書き（2026-07-11・Phase4 後始末）
+
+**不合格 → 生値保全に切替。** derived系列（state/roll_yield_ann/change_20d）の
+shadow 記録は凍結（protocol v1.6 は予約・欠番のまま）。代わりに `term-archive.yml`
+（日次）が上場中の期近3限月の `{date, contract_id, close}` を `term_raw.jsonl` へ
+事実のみ追記する（F1選定・ロール規則は適用しない。導出は将来の分析側で行う）。
+**アーカイブが6ヶ月分（front切替6回以上）に到達後、基準Dを同一定義で再監査し、
+合格で Stage 2 を再開する。**

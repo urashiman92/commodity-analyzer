@@ -263,8 +263,8 @@ def main():
             by_f = {f: rows for f, rows in tables_m}
             mirror = {}
             for f in FWD:
-                hs = [r["high_mean%"] for r in by_f[f] if r["high_mean%"] is not None]
-                ls = [r["low_mean%"] for r in by_f[f] if r["low_mean%"] is not None]
+                hs = [round(float(r["high_mean%"]), 3) for r in by_f[f] if r["high_mean%"] is not None]
+                ls = [round(float(r["low_mean%"]), 3) for r in by_f[f] if r["low_mean%"] is not None]
                 mirror[f] = (all(x > 0 for x in hs), all(x < 0 for x in ls), hs, ls)
             L.append("- 仮説（reversal）と**逆＝継続方向**がほぼ符号安定: "
                      f"10営業日は high正 {mirror[10][2]}・low負 {mirror[10][3]} で**両側3/3**、"

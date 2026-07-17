@@ -307,6 +307,40 @@ def section_event_gate(recs):
     conservative_table(recs, _event_group, labels, "イベントゲート")
 
 
+def _liq_group(rec):
+    """v1.7 流動性トリガー対称テストの群分け（protocol §14 と同一に保つ）。
+
+    群ラベル規約（方向仮説ではない）: sweep継続方向 high→+1 / low→−1 と
+    conviction 符号の一致/不一致。sweep null・neutral は対象外（None）。
+    """
+    liq = rec.get("liquidity")
+    if not isinstance(liq, dict):
+        return None
+    sw = liq.get("sweep")
+    if not isinstance(sw, dict):
+        return None
+    cont = {"high": 1, "low": -1}.get(sw.get("side"), 0)
+    conv = {"bullish": 1, "bearish": -1}.get(rec.get("direction"), 0)
+    if cont == 0 or conv == 0:
+        return None
+    return "一致" if cont == conv else "不一致"
+
+
+def section_liquidity(recs):
+    """v1.7: 流動性トリガー整合の対称テスト（差の存在のみ・方向不問）。"""
+    print("\n## 流動性トリガー（v1.7・sweep非nullのみ対象/対称・差の存在のみ）\n")
+    print("群ラベル規約: sweep継続方向(high→+1/low→−1) × conviction符号の一致/不一致"
+          "（ラベルは規約であり方向仮説ではない）。本判定は各群 n>=100・CI非重複で「差あり」。\n")
+    labels = ["一致", "不一致"]
+    print("| 群 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    for g in labels:
+        sub = [r for r in recs if _liq_group(r) == g]
+        cells = [hit_cell(sub, hz, ta_hit) for hz in HORIZONS]
+        print(f"| {g} | " + " | ".join(cells) + " |")
+    conservative_table(recs, _liq_group, labels, "流動性トリガー")
+
+
 def section_coverage(pending, history):
     print("\n## カバレッジ（記録件数: pending=未確定 + history=確定）\n")
     combos = {}
@@ -361,6 +395,7 @@ def main():
     section_divergence(history)
     section_news_attribution(history)
     section_event_gate(history)
+    section_liquidity(history)
     section_coverage(pending, history)
 
 

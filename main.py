@@ -38,6 +38,7 @@ from signal_logger import record_signal, pending_path_for
 from macro_alignment import get_macro_state
 from cot_alignment import get_cot_state
 from event_gate import get_event_gate
+from liquidity_alignment import compute_liquidity
 
 
 # news-bot が GitHub raw に書き出すニュース状態ファイル
@@ -212,6 +213,9 @@ def analyze_one(symbol: dict, timeframe: dict, config: dict,
                 # shadow: イベントゲート（config/events.yaml のローカル読みのみ）。
                 # ウィンドウ外は pre/post 空配列。yaml 不読は None (= null で記録)。
                 'event_gate': get_event_gate(name),
+                # shadow: 流動性トリガー（取得済みOHLC窓内で完結・追加fetchなし）。
+                # 算出失敗・データ不足は None (= null で記録)。
+                'liquidity': compute_liquidity(df),
             }, price_at_signal=float(df['Close'].iloc[-1]))
             logger.info(f"  記録: {pending_path_for(tf_label)}")
         except Exception:

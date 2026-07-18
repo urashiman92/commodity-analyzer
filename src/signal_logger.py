@@ -88,6 +88,8 @@ def record_signal(signal: dict, price_at_signal: float,
         "cot": signal.get("cot"),
         # shadow: イベントゲート（Phase3）。ウィンドウ外は空配列、yaml不読は null。
         "event_gate": signal.get("event_gate"),
+        # shadow: 流動性トリガー（Phase5）。算出失敗・データ不足は null。
+        "liquidity": signal.get("liquidity"),
         "horizons": _empty_horizons(),
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:

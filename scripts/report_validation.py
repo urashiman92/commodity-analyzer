@@ -18,9 +18,14 @@ import math
 import os
 import statistics
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 HORIZONS = ["1h", "24h", "72h", "168h"]
+# v1.10 §18: news_era 境界（本書で固定・以後変更しない）。
+# ニュース層停止 2026-06-08〜07-02 により無風レコードが同期間に集中するため、
+# 「ニュースあり/なし」の比較が期間比較と交絡していないかを診断する。
+NEWS_ERA_CUTOFF = datetime(2026, 7, 2, 22, 0, 0, tzinfo=timezone.utc)
+ERA_LABELS = ["pre_outage_or_outage", "post_recovery"]
 BUCKETS = ["critical", "normal", "reference", "other", "divergence"]
 # 本判定/interim の n 基準（protocol §5c）
 N_FULL = 100
@@ -420,6 +425,66 @@ def section_entry_rule(recs):
                        "両通知エントリー（層別併記）")
 
 
+def _parse_ts(rec):
+    """記録 timestamp を UTC aware datetime に。naive は UTC とみなす（CLAUDE.md 原則5）。"""
+    try:
+        ts = datetime.fromisoformat(rec["timestamp"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
+def news_era(rec):
+    """v1.10 §18.2: news_era ラベル（境界は NEWS_ERA_CUTOFF で固定）。"""
+    ts = _parse_ts(rec)
+    if ts is None:
+        return None
+    return "pre_outage_or_outage" if ts < NEWS_ERA_CUTOFF else "post_recovery"
+
+
+def ts_median(recs):
+    """群の記録タイムスタンプ中央値（期間の偏りを直接示す・v1.10 §18.2）。"""
+    ts = sorted(t for t in (_parse_ts(r) for r in recs) if t is not None)
+    if not ts:
+        return "—"
+    return ts[len(ts) // 2].strftime("%Y-%m-%d %H:%M")
+
+
+def era_diag_table(recs, group_fn, group_labels, title):
+    """v1.10 §18: 群 × news_era の診断テーブル（主集計/保守集計/期間層別/ts中央値）。"""
+    print(f"\n### {title}\n")
+    print("| 群 | 主集計 168h | 保守集計 168h | pre_outage_or_outage 168h | "
+          "post_recovery 168h | ts中央値 |")
+    print("|---|---|---|---|---|---|")
+    for g in group_labels:
+        sub = [r for r in recs if group_fn(r) == g]
+        cells = [
+            hit_cell(sub, "168h", ta_hit),
+            hit_cell(dedup_weekly(sub), "168h", ta_hit),
+            hit_cell([r for r in sub if news_era(r) == "pre_outage_or_outage"], "168h", ta_hit),
+            hit_cell([r for r in sub if news_era(r) == "post_recovery"], "168h", ta_hit),
+            ts_median(sub),
+        ]
+        print(f"| {g} | " + " | ".join(cells) + " |")
+
+
+def section_period_confounding(recs):
+    """v1.10 §18: 期間交絡の診断（全セクション併記・合否判定には使用しない）。"""
+    print("\n## 期間層別診断（v1.10 §18・診断用/合否判定には使用しない）\n")
+    print("ニュース層停止 2026-06-08〜07-02 により無風レコードが同期間に集中するため、"
+          "「ニュースあり/なし」の比較が期間比較と交絡していないかを診断する。")
+    print(f"境界: {NEWS_ERA_CUTOFF.isoformat()}（v1.10 で固定・変更しない）。")
+    print("**用途は交絡の有無の記述のみ。本表を根拠に群定義の変更・基準改訂・"
+          "事後除外は行わない（v1.10 §18.3）。**")
+    era_diag_table(recs, bucket_of, ["reference", "normal", "critical"], "v1 バケット")
+    era_diag_table(recs, _news_group, ["減衰", "中立", "増幅", "無風"], "v1.2 ニュース層帰属")
+    era_diag_table(recs, _entry_group, ["両通知", "対照"], "v1.8 両通知エントリー（主検定）")
+    era_diag_table(recs, _entry_group_strat, ["対照:ニュース非該当", "対照:無風"],
+                   "v1.8 対照群の層別")
+    era_diag_table(recs, _event_group, ["pre", "ウィンドウ外"], "v1.4 イベントゲート")
+    era_diag_table(recs, _liq_group, ["一致", "不一致"], "v1.7 流動性トリガー")
+
+
 def section_coverage(pending, history):
     print("\n## カバレッジ（記録件数: pending=未確定 + history=確定）\n")
     combos = {}
@@ -476,6 +541,7 @@ def main():
     section_entry_rule(history)
     section_event_gate(history)
     section_liquidity(history)
+    section_period_confounding(history)
     section_coverage(pending, history)
 
 

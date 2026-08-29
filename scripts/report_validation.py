@@ -341,6 +341,54 @@ def section_liquidity(recs):
     conservative_table(recs, _liq_group, labels, "流動性トリガー")
 
 
+def _entry_group(rec):
+    """v1.8「両通知エントリー」テストの群分け（protocol §15.2 の定義と同一に保つ）。
+
+    記録スキーマ対応（§15.3）: レコードに `routing` / `alignment` は存在しないため、
+    routing は v1 §3 バケット導出（非divergence かつ |conviction|>=30 = normal/critical）、
+    high_importance_count はトップレベルの記録済みフィールドを使う。
+    normalized の導出式は v1.2 §10 と同一（sign(ta_score) × net_direction）だが、
+    本テストは閾値±0.2ではなく > 0（厳密正）を用いる。
+    """
+    if rec.get("is_divergence"):
+        return None  # divergence は対象外
+    if bucket_of(rec) not in ("normal", "critical"):
+        return None  # 実通知帯（normal/critical）以外は対象外
+    ta = rec.get("ta_score") or 0
+    sign = (ta > 0) - (ta < 0)
+    normalized = sign * (rec.get("net_direction") or 0)
+    if (rec.get("high_importance_count") or 0) >= 1 and normalized > 0:
+        return "両通知"
+    return "対照"
+
+
+def section_entry_rule(recs):
+    """v1.8: 両通知エントリー（実発火AND）。両通知群 vs 対照群。"""
+    print("\n## 両通知エントリー（v1.8・divergence除外/routing=normal+critical のみ）\n")
+    print("両通知群 = high_importance_count>=1 かつ sign(ta_score)×net_direction>0。"
+          "対照群 = 同帯でニュース条件を満たさないもの。\n")
+    print("事前予測: 両通知群 > 対照群（本判定は両群 n>=100・CI非重複の優越 かつ 保守集計で序列保存）。")
+    print("注記: 一致率は方向勝率でありP&L勝率ではない（v1.8 §15.7）。"
+          "ニュース側は eff_imp>=4 基準で news-bot 実通知(importance>=3)の部分集合（§15.4）。\n")
+    labels = ["両通知", "対照"]
+    groups = {g: [r for r in recs if _entry_group(r) == g] for g in labels}
+    print("| 群 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    for g in labels:
+        cells = [hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS]
+        print(f"| {g} | " + " | ".join(cells) + " |")
+    # 中央値%リターン（protocol §15.5）
+    print("\n| 群 | 168h 中央値 | 72h 中央値 |")
+    print("|---|---|---|")
+    for g in labels:
+        row = [g]
+        for hz in ("168h", "72h"):
+            vals = returns_of(groups[g], hz)
+            row.append(fmt_num(statistics.median(vals)) if vals else "— (n=0)")
+        print("| " + " | ".join(row) + " |")
+    conservative_table(recs, _entry_group, labels, "両通知エントリー")
+
+
 def section_coverage(pending, history):
     print("\n## カバレッジ（記録件数: pending=未確定 + history=確定）\n")
     combos = {}
@@ -394,6 +442,7 @@ def main():
 
     section_divergence(history)
     section_news_attribution(history)
+    section_entry_rule(history)
     section_event_gate(history)
     section_liquidity(history)
     section_coverage(pending, history)

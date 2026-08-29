@@ -26,6 +26,10 @@ HORIZONS = ["1h", "24h", "72h", "168h"]
 # 「ニュースあり/なし」の比較が期間比較と交絡していないかを診断する。
 NEWS_ERA_CUTOFF = datetime(2026, 7, 2, 22, 0, 0, tzinfo=timezone.utc)
 ERA_LABELS = ["pre_outage_or_outage", "post_recovery"]
+# v1.11 §19.2: アウトオブサンプル確認の開始時刻（登録日）。
+# 仮説は登録日時点の既存サンプルの探索的観察から生成されたため、
+# これより前の記録は一切対象に含めない。
+V111_START = datetime(2026, 8, 29, 0, 0, 0, tzinfo=timezone.utc)
 BUCKETS = ["critical", "normal", "reference", "other", "divergence"]
 # 本判定/interim の n 基準（protocol §5c）
 N_FULL = 100
@@ -468,6 +472,39 @@ def era_diag_table(recs, group_fn, group_labels, title):
         print(f"| {g} | " + " | ".join(cells) + " |")
 
 
+def _v111_group(rec):
+    """v1.11 §19: 無風群 vs ニュース群（登録日以降の新規サンプルのみ）。
+
+    §19.2: timestamp >= V111_START の記録のみ対象（登録日より前は仮説生成に
+    使われたデータのため一切含めない）。§19.3: divergence は除外。
+    """
+    if rec.get("is_divergence"):
+        return None
+    ts = _parse_ts(rec)
+    if ts is None or ts < V111_START:
+        return None
+    return "無風" if not (rec.get("news_count") or 0) else "ニュース"
+
+
+def section_v111(recs):
+    """v1.11: ニュース存在による TA 方向精度の劣化テスト（アウトオブサンプル確認）。"""
+    print("\n## ニュース存在によるTA方向精度の劣化（v1.11・アウトオブサンプル確認）\n")
+    print(f"対象: timestamp >= {V111_START.isoformat()} の記録のみ"
+          "（登録日以降＝新規サンプル。登録日より前は仮説生成に使われたため除外）。")
+    print("群: news_count=0（無風群） vs news_count>=1（ニュース群）。divergence は除外。")
+    print("事前予測: 無風群 > ニュース群（168h方向一致率）。"
+          "本判定は両群 主集計 n>=100・保守集計で序列保存。")
+    print("**交絡の明示（§19.6）: 「ニュースの有無」と「市場の荒れ具合」は本テストでは"
+          "分離できない。本テストの合格は因果の主張を含まない。**\n")
+    labels = ["無風", "ニュース"]
+    print("| 群 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    for g in labels:
+        sub = [r for r in recs if _v111_group(r) == g]
+        print(f"| {g} | " + " | ".join(hit_cell(sub, hz, ta_hit) for hz in HORIZONS) + " |")
+    conservative_table(recs, _v111_group, labels, "v1.11 ニュース存在の劣化テスト")
+
+
 def section_period_confounding(recs):
     """v1.10 §18: 期間交絡の診断（全セクション併記・合否判定には使用しない）。"""
     print("\n## 期間層別診断（v1.10 §18・診断用/合否判定には使用しない）\n")
@@ -541,6 +578,7 @@ def main():
     section_entry_rule(history)
     section_event_gate(history)
     section_liquidity(history)
+    section_v111(history)
     section_period_confounding(history)
     section_coverage(pending, history)
 

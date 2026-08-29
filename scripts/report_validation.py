@@ -225,15 +225,19 @@ def conservative_table(recs, group_fn, group_labels, title, hit_fns=None):
     """v1.5 保守集計の併記テーブル（主軸168hのみ）。
 
     group_fn: rec→ラベル（対象外は None）。hit_fns: [(列名, hit関数)]。
+
+    v1.9 §16: 適用順序は「群フィルタ → symbol×ISO週 dedup」。
+    旧実装は dedup→群フィルタの順で、週の最初の1件が当該群に該当するかに n が依存し
+    群間比較が成立していなかった。独立性の目的（各群内で symbol×ISO週あたり最大1観測）
+    は本順序でも満たされる。n>=100 ゲートと合格条件は不変更。
     """
     if hit_fns is None:
         hit_fns = [("168h", ta_hit)]
-    ded = dedup_weekly(recs)
-    print(f"\n#### {title}（保守集計 v1.5: symbol×ISO週 最初の1件・timeframe混合）\n")
+    print(f"\n#### {title}（保守集計 v1.5/v1.9: 群内で symbol×ISO週 最初の1件・timeframe混合）\n")
     print("| 群 | " + " | ".join(n for n, _ in hit_fns) + " |")
     print("|---|" + "---|" * len(hit_fns))
     for g in group_labels:
-        sub = [r for r in ded if group_fn(r) == g]
+        sub = dedup_weekly([r for r in recs if group_fn(r) == g])
         cells = [hit_cell(sub, "168h", fn) for _, fn in hit_fns]
         print(f"| {g} | " + " | ".join(cells) + " |")
 
@@ -362,31 +366,58 @@ def _entry_group(rec):
     return "対照"
 
 
+def _entry_group_strat(rec):
+    """v1.9 §17: v1.8 対照群を news_count で層別（併記のみ・主検定は不変更）。
+
+    層別の根拠は 2026-06-08〜07-02 のニュース層停止期間という既知のデータ来歴であり、
+    観測された結果の方向に基づくものではない（v1.2 §10 の無風別掲と同じ扱い）。
+    """
+    g = _entry_group(rec)
+    if g != "対照":
+        return g  # 両通知 / None はそのまま
+    return "対照:ニュース非該当" if (rec.get("news_count") or 0) >= 1 else "対照:無風"
+
+
 def section_entry_rule(recs):
-    """v1.8: 両通知エントリー（実発火AND）。両通知群 vs 対照群。"""
+    """v1.8: 両通知エントリー（実発火AND）。主検定は 両通知群 vs 対照群（全体）。"""
     print("\n## 両通知エントリー（v1.8・divergence除外/routing=normal+critical のみ）\n")
     print("両通知群 = high_importance_count>=1 かつ sign(ta_score)×net_direction>0。"
           "対照群 = 同帯でニュース条件を満たさないもの。\n")
     print("事前予測: 両通知群 > 対照群（本判定は両群 n>=100・CI非重複の優越 かつ 保守集計で序列保存）。")
     print("注記: 一致率は方向勝率でありP&L勝率ではない（v1.8 §15.7）。"
           "ニュース側は eff_imp>=4 基準で news-bot 実通知(importance>=3)の部分集合（§15.4）。\n")
+
     labels = ["両通知", "対照"]
+    strat_labels = ["対照:ニュース非該当", "対照:無風"]
+    all_labels = ["両通知", "対照"] + strat_labels
     groups = {g: [r for r in recs if _entry_group(r) == g] for g in labels}
+    groups.update({g: [r for r in recs if _entry_group_strat(r) == g] for g in strat_labels})
+
+    print("**主検定（v1.8 §15.5・定義不変更）**\n")
     print("| 群 | " + " | ".join(HORIZONS) + " |")
     print("|---|" + "---|" * len(HORIZONS))
     for g in labels:
-        cells = [hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS]
-        print(f"| {g} | " + " | ".join(cells) + " |")
+        print(f"| {g} | " + " | ".join(hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS) + " |")
+
+    print("\n**対照群の層別（v1.9 §17・併記のみ。主検定は上表のまま）**\n")
+    print("| 層 | " + " | ".join(HORIZONS) + " |")
+    print("|---|" + "---|" * len(HORIZONS))
+    for g in strat_labels:
+        print(f"| {g} | " + " | ".join(hit_cell(groups[g], hz, ta_hit) for hz in HORIZONS) + " |")
+
     # 中央値%リターン（protocol §15.5）
     print("\n| 群 | 168h 中央値 | 72h 中央値 |")
     print("|---|---|---|")
-    for g in labels:
+    for g in all_labels:
         row = [g]
         for hz in ("168h", "72h"):
             vals = returns_of(groups[g], hz)
             row.append(fmt_num(statistics.median(vals)) if vals else "— (n=0)")
         print("| " + " | ".join(row) + " |")
-    conservative_table(recs, _entry_group, labels, "両通知エントリー")
+
+    conservative_table(recs, _entry_group, labels, "両通知エントリー（主検定）")
+    conservative_table(recs, _entry_group_strat, ["両通知"] + strat_labels,
+                       "両通知エントリー（層別併記）")
 
 
 def section_coverage(pending, history):

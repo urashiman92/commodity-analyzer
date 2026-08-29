@@ -20,6 +20,7 @@ git コミットされる状態ファイル（*.json / *.jsonl）は、**書き�
 | `signal_history.jsonl`（+月次アーカイブ） | verify-signals のみ | append 専用 |
 | `cot_state.json` | cot-weekly のみ | 全書き（週次上書き） |
 | `term_raw.jsonl` | term-archive のみ | append 専用（日次・(date,contract_id)で冪等） |
+| `milestone_state.json` | milestone-check のみ | 全書き（通知済みキーの集合） |
 
 - verifier は pending を**読み取り専用**で走査。pending からの削除・移動は誰もしない（追記専用ログ）。
 - 重複防止は `signal_id`（sha1(timestamp\|symbol\|timeframe)）の idempotency（history 既載スキップ）で行う。

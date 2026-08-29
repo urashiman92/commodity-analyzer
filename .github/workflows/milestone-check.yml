@@ -1,0 +1,58 @@
+name: Milestone Check
+
+on:
+  schedule:
+    # 毎日 1:00 UTC = 10:00 JST。verify-signals（0:30 UTC）の後に走らせ、
+    # その日の確定分を反映した n で判定する。平時は何も通知しない。
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check milestones
+        run: python scripts/check_milestones.py
+        env:
+          PYTHONIOENCODING: utf-8
+          # 専用チャンネルが欲しくなったら、この行だけ別Secretに差し替える
+          WEBHOOK_CRITICAL: ${{ secrets.WEBHOOK_CRITICAL }}
+
+      - name: Commit milestone state
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # 書き手は本ワークフローのみ（CLAUDE.md 書き手マップ）。他のファイルは add しない。
+          git add milestone_state.json
+          if git diff --staged --quiet; then
+            echo "変更なし、commit不要"
+            exit 0
+          fi
+          git pull --rebase --autostash || git rebase --abort
+          git commit -m "Update milestone state [skip ci]"
+          for i in 1 2 3; do
+            if git push; then
+              echo "Push成功（試行$i回目）"
+              exit 0
+            fi
+            echo "Push失敗、リトライ中（$i/3）..."
+            sleep 2
+            git pull --rebase --autostash || git rebase --abort
+          done
+          echo "Push最終的に失敗"
+          exit 1

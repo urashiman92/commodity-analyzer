@@ -27,8 +27,12 @@ git コミットされる状態ファイル（*.json / *.jsonl）は、**書き�
 - Actions ランナー上で書いたファイルは **commit ステップで push しなければ消える**。
   書き手ワークフローには必ず自分のファイルだけを `git add` する commit ステップ（rebase+3リトライ+[skip ci]）を付け、
   `permissions: contents: write` を忘れない（既定 GITHUB_TOKEN は read）。
-- glob を `git add` に直接書かない（`signal_history_*.jsonl` が未解決だと pathspec エラーで job ごと落ちる。実害済み）。
-  存在チェック付きループで add する。
+- **`git add` の対象は「存在しないことがありうるか」を必ず確認する**。未解決 glob も、
+  条件付きでしか生成されないファイルも、`git add` が pathspec エラー（exit 128）を返し
+  `shell: bash -e` の job ごと落ちる（どちらも実害済み: `signal_history_*.jsonl` の glob、
+  および平時に書かれない `milestone_state.json`）。
+  存在チェック（`[ -e "$f" ] && git add "$f"` / `if [ -e f ]; then ...; fi`）を挟むこと。
+  常時追跡されているファイル（seen/state/pending/history 等）はそのまま add してよい。
 
 ## 2. LLMは言語境界のみ（数値経路に入れない）
 

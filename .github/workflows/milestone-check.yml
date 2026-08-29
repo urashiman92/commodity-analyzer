@@ -38,7 +38,11 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           # 書き手は本ワークフローのみ（CLAUDE.md 書き手マップ）。他のファイルは add しない。
-          git add milestone_state.json
+          # 平時（通知ゼロ）は state を書かない設計なのでファイルが存在しないことがある。
+          # 存在しないパスを git add すると pathspec エラーで job ごと落ちるため存在チェックする。
+          if [ -e milestone_state.json ]; then
+            git add milestone_state.json
+          fi
           if git diff --staged --quiet; then
             echo "変更なし、commit不要"
             exit 0

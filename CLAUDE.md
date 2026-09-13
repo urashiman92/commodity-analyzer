@@ -27,6 +27,10 @@ git コミットされる状態ファイル（*.json / *.jsonl）は、**書き�
 - Actions ランナー上で書いたファイルは **commit ステップで push しなければ消える**。
   書き手ワークフローには必ず自分のファイルだけを `git add` する commit ステップ（rebase+3リトライ+[skip ci]）を付け、
   `permissions: contents: write` を忘れない（既定 GITHUB_TOKEN は read）。
+- **`permissions:` を明示したジョブでは、書かなかったスコープは none になる**。
+  Actions API を読むジョブには `actions: read` を明記し、`GITHUB_TOKEN: ${{ github.token }}` を
+  env に渡すこと（env に渡さないとスクリプトから参照できない）。
+  欠けると 403 で黙って機能が無効化される（死活監視が沈黙する形で実害になりうる）。
 - **`git add` の対象は「存在しないことがありうるか」を必ず確認する**。未解決 glob も、
   条件付きでしか生成されないファイルも、`git add` が pathspec エラー（exit 128）を返し
   `shell: bash -e` の job ごと落ちる（どちらも実害済み: `signal_history_*.jsonl` の glob、

@@ -14,7 +14,9 @@
                     ※ 一致率は通知しない（判定前に数字の印象を入れないため）
   B. 日付ベース  … 毎月第1営業日の events.yaml 更新リマインド /
                     登録イベントの枯渇（最遠イベントが30日以内）/ term再監査の到達
-  C. 死活        … cot_state / term_raw / signal_pending の鮮度
+  C. 死活        … 各ワークフローの「最後に正常完走した時刻」（GitHub Actions API）
+                    + cot_state のデータ鮮度（稼働とは別軸）
+                    ※ API で取得できないものは判定をスキップ（監視失敗で偽アラートを出さない）
 
 再通知の抑制: milestone_state.json に通知済みキーを保持し同一項目は1回のみ。
 死活アラートは条件が解消したらフラグを消す（再発時は再通知される）。
@@ -36,10 +38,29 @@ import report_validation as rv  # noqa: E402  (chdir 後に読む)
 STATE_PATH_DEFAULT = "milestone_state.json"
 EVENTS_YAML = "config/events.yaml"
 
-# --- 鮮度の許容日数（C. 死活） ---
+# --- C. 死活: データ鮮度（ワークフロー稼働とは別軸） ---
 COT_STALE_DAYS = 14
-TERM_STALE_DAYS = 5
-PENDING_STALE_DAYS = 7
+
+# --- C. 死活: ワークフローの最終成功時刻 ---
+# 「最後にシグナルが記録された時刻」ではなく「最後にジョブが正常完走した時刻」で判定する。
+# 前者は "静かな相場（全銘柄 silent で pending に1行も追記されない）" と "WF停止" を
+# 区別できず誤報を出した（2026-09-10 に health:pending_1d_stale が発火。実際は
+# ta-1d が全平日 success で、9/3〜9/11 に条件を満たすシグナルが無かっただけ）。
+#
+# 閾値は cron 間隔 + 実測の起動遅延（GitHub のスケジュール遅延は実測 2〜5h）を踏まえた値:
+#   ta-4h        1日6回(0,4,8,12,16,20時)・毎日 → 2日（連続12回の失敗で発火）
+#   ta-1d        平日のみ 23:10（実測 01:00 前後に起動）。金→月が最長の空白で、
+#                月曜朝のチェック時点の最大 age は約2.2日 → 3日（週末の空白では発火しない）
+#   verify-signals 毎日 0:30 → 3日（2日連続失敗までは許容）
+#   cot-weekly   毎週土曜 1:00 → 14日（2週連続失敗で発火。CoT は週次公表）
+#   term-archive 平日 22:30 → 5日（ta-1d 同様に週末の空白を吸収した上で2営業日分の猶予）
+WORKFLOW_HEALTH = [
+    ("ta-4h.yml", "ta-4h（4時間足の分析・記録）", 2.0),
+    ("ta-1d.yml", "ta-1d（日足の分析・記録）", 3.0),
+    ("verify-signals.yml", "verify-signals（ホライズン照合）", 3.0),
+    ("cot-weekly.yml", "cot-weekly（CoT取得）", 14.0),
+    ("term-archive.yml", "term-archive（限月生値アーカイブ）", 5.0),
+]
 # --- B. 日付ベース ---
 EVENTS_EXHAUST_DAYS = 30           # 最遠イベントがこれ以内なら「登録が尽きる」警告
 TERM_REAUDIT_FROM = date(2027, 1, 1)
@@ -102,24 +123,6 @@ def first_business_day(year, month):
         if d.weekday() < 5:
             return d
     return date(year, month, 1)
-
-
-def read_jsonl_last(path):
-    """最終行の dict（無ければ None）。"""
-    if not os.path.exists(path):
-        return None
-    last = None
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                last = line
-    if last is None:
-        return None
-    try:
-        return json.loads(last)
-    except json.JSONDecodeError:
-        return None
 
 
 # ------------------------------------------------------------------ checks
@@ -206,55 +209,98 @@ def check_term_reaudit(now):
     return []
 
 
-def check_health(now):
-    """C. 死活。(key, msg, is_alert) を返す。解消時はフラグを消せるよう is_alert=False も返す。"""
+def _repo_slug():
+    """owner/repo。Actions では GITHUB_REPOSITORY、ローカルでは origin の URL から。"""
+    slug = os.environ.get("GITHUB_REPOSITORY")
+    if slug:
+        return slug
+    try:
+        import subprocess
+        url = subprocess.run(["git", "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        return None
+    if not url:
+        return None
+    url = url.removesuffix(".git")
+    if url.startswith("git@"):
+        url = url.split(":", 1)[-1]
+    parts = [p for p in url.split("/") if p]
+    return "/".join(parts[-2:]) if len(parts) >= 2 else None
+
+
+def latest_success_at(workflow_file, now):
+    """ワークフローの最新 success の完了時刻。取得できなければ None（= 判定をスキップ）。
+
+    監視自体の失敗で偽アラートを出さないため、例外・認証なし・0件はすべて None を返す。
+    """
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    repo = _repo_slug()
+    if not token or not repo:
+        return None
+    try:
+        import requests
+        resp = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/runs",
+            params={"status": "success", "per_page": 1},
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        runs = resp.json().get("workflow_runs") or []
+    except Exception as e:
+        print(f"[WARN] {workflow_file} の run 取得に失敗（判定スキップ）: {e}")
+        return None
+    if not runs:
+        print(f"[WARN] {workflow_file} の success run が0件（判定スキップ）")
+        return None
+    return _parse_dt(runs[0].get("updated_at") or runs[0].get("created_at"))
+
+
+def check_health(now, fetch=None):
+    """C. 死活。(key, msg, is_alert) を返す。解消時はフラグを消せるよう is_alert=False も返す。
+
+    ワークフローの最終成功時刻が取得できなかったものは**タプル自体を返さない**
+    （アラートも解除もしない = 監視不能時に沈黙する）。
+    """
+    fetch = fetch or latest_success_at
     out = []
 
-    # cot_state.json: symbols[*].as_of の最新
+    # --- ワークフロー稼働（最後に正常完走した時刻） ---
+    for wf_file, label, limit_days in WORKFLOW_HEALTH:
+        last = fetch(wf_file, now)
+        if last is None:
+            continue  # 監視不能 → 沈黙（誤報を出さない）
+        a = age_days(last, now)
+        out.append((
+            f"health:wf_{wf_file.removesuffix('.yml')}",
+            f"🚨 **{label} が {a:.1f} 日間 成功していません**"
+            f"（最終成功 {last.isoformat(timespec='minutes')} / 閾値 {limit_days:.0f}日）。\n"
+            f"→ .github/workflows/{wf_file} の失敗を確認してください。",
+            a >= limit_days,
+        ))
+
+    # --- データ鮮度（WF稼働とは別軸。ジョブが成功しても中身が古いことはある） ---
     as_of = None
     if os.path.exists("cot_state.json"):
         try:
             with open("cot_state.json", encoding="utf-8") as f:
                 cot = json.load(f)
-            cands = [_parse_dt(v.get("as_of"))
-                     for v in (cot.get("symbols") or {}).values()]
-            cands = [c for c in cands if c]
+            cands = [c for c in (_parse_dt(v.get("as_of"))
+                                 for v in (cot.get("symbols") or {}).values()) if c]
             as_of = max(cands) if cands else None
         except (json.JSONDecodeError, OSError, AttributeError):
             as_of = None
     a = age_days(as_of, now)
     out.append(("health:cot_stale",
-                f"🚨 **CoT が更新されていません**: 最新 as_of "
+                f"🚨 **CoT データが更新されていません**: 最新 as_of "
                 f"{as_of.date().isoformat() if as_of else '不明'}"
-                f"（{a:.0f} 日前）。cot-weekly.yml を確認してください。"
+                f"（{a:.0f} 日前）。cot-weekly.yml と CFTC 公表を確認してください。"
                 if a is not None else
                 "🚨 **cot_state.json を読めない/as_of がありません**。",
                 a is None or a >= COT_STALE_DAYS))
-
-    # term_raw.jsonl: 最終行の date
-    last = read_jsonl_last("term_raw.jsonl")
-    tdt = _parse_dt(last.get("date")) if last else None
-    a = age_days(tdt, now)
-    out.append(("health:term_stale",
-                f"🚨 **term_raw が更新されていません**: 最終 "
-                f"{tdt.date().isoformat() if tdt else '不明'}（{a:.0f} 日前）。"
-                "term-archive.yml を確認してください。"
-                if a is not None else
-                "🚨 **term_raw.jsonl が空/読めません**。",
-                a is None or a >= TERM_STALE_DAYS))
-
-    # signal_pending_*.jsonl: 各ファイルの最終 timestamp
-    for tf, path in (("4h", "signal_pending_4h.jsonl"), ("1d", "signal_pending_1d.jsonl")):
-        last = read_jsonl_last(path)
-        pdt = _parse_dt(last.get("timestamp")) if last else None
-        a = age_days(pdt, now)
-        out.append((f"health:pending_{tf}_stale",
-                    f"🚨 **{path} が更新されていません**: 最終 "
-                    f"{pdt.isoformat() if pdt else '不明'}（{a:.0f} 日前）。"
-                    f"ta-{tf} ワークフローを確認してください。"
-                    if a is not None else
-                    f"🚨 **{path} が空/読めません**。",
-                    a is None or a >= PENDING_STALE_DAYS))
     return out
 
 

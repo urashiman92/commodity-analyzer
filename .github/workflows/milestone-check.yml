@@ -9,6 +9,10 @@ on:
 
 permissions:
   contents: write
+  # 死活チェックが Actions API（/actions/workflows/*/runs）を読むために必要。
+  # permissions を明示したジョブでは未記載スコープが none になるため、
+  # これが無いと API が 403 → 判定スキップで死活監視が黙って無効化される。
+  actions: read
 
 jobs:
   check:
@@ -32,6 +36,9 @@ jobs:
           PYTHONIOENCODING: utf-8
           # 専用チャンネルが欲しくなったら、この行だけ別Secretに差し替える
           WEBHOOK_CRITICAL: ${{ secrets.WEBHOOK_CRITICAL }}
+          # 死活チェックの Actions API 用（既定トークン。新Secret不要）。
+          # env に渡さないとスクリプトから参照できない（自動では環境変数にならない）。
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Commit milestone state
         run: |

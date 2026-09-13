@@ -38,22 +38,21 @@ us_federal_holidays:
 
 # ルール自動生成（ロジックは src/event_gate.py が実装。ここは定義の宣言）
 recurring:
-  # TODO(2026-09-13): シフト週の【時刻】が公式と1時間ずれている（日付は一致）。
-  #   実装 src/event_gate.py:_gen_eia_weekly は「木曜 11:00 ET」だが、
+  # 訂正済み(2026-09-13): シフト週の【時刻】を 木曜11:00 ET → 木曜12:00 ET に修正。
   #   EIA 公式の Holiday Release Schedule では 2025-01-23 以降の振替は全て
   #   「木曜 12:00 p.m. ET」（11:00 は 2025-01-02 の New Year's が最後）。
   #   出典: https://www.eia.gov/petroleum/supply/weekly/schedule.php
   #         （2026-09-13 に本環境から HTTP 200 で取得・表を直接確認）
-  #   例: Veterans Day 週（データ週 11/6 → 振替 2026-11-12 木 12:00 p.m. ET）。
-  #   修正はアンカー時刻の変更 = pre/post ウィンドウの当たり判定が1時間動くため、
-  #   protocol v1.4 の群定義に影響しうる。コード修正と protocol の扱いを決めてから行う
-  #   （本ファイルの月次更新では触らない）。
-  # 確認済み(2026-09-13): シフト【日】のロジックは公式と一致。
+  #   実装の定数は src/event_gate.py の EIA_NORMAL_ET / EIA_SHIFTED_ET。
+  #   事実誤りの訂正であり観測結果に基づく調整ではない（protocol v1.12 に記録）。
+  #   訂正前に記録済みのシフト週レコードは pre ウィンドウが実際の発表1時間前に
+  #   終了していた（v1.4 判定時に該当件数と比率を診断併記する。判定基準は不変更）。
+  # 確認済み(2026-09-13): シフト【日】のロジックは公式と一致（本修正でも変更なし）。
   #   Labor Day 9/7(月)→9/10木 / Columbus 10/12(月)→10/15木 / Veterans 11/11(水)→11/12木。
   #   Thanksgiving 11/26(木) は公式表に振替行が無く、水曜通常リリースのまま = 実装と一致
   #   （木曜祝日は水曜の発表後のためシフト不要。推測ではなく公式表で確認）。
   - name: "EIA週次石油在庫"
-    rule: eia_weekly        # 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜11:00 ET（↑TODO）
+    rule: eia_weekly        # 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜12:00 ET
     symbols: [WTI原油]
   - name: "Crop Progress"
     rule: crop_progress     # 月曜16:00 ET・4〜11月のみ。月曜祝日 → 火曜16:00 ET

@@ -38,8 +38,22 @@ us_federal_holidays:
 
 # ルール自動生成（ロジックは src/event_gate.py が実装。ここは定義の宣言）
 recurring:
+  # TODO(2026-09-13): シフト週の【時刻】が公式と1時間ずれている（日付は一致）。
+  #   実装 src/event_gate.py:_gen_eia_weekly は「木曜 11:00 ET」だが、
+  #   EIA 公式の Holiday Release Schedule では 2025-01-23 以降の振替は全て
+  #   「木曜 12:00 p.m. ET」（11:00 は 2025-01-02 の New Year's が最後）。
+  #   出典: https://www.eia.gov/petroleum/supply/weekly/schedule.php
+  #         （2026-09-13 に本環境から HTTP 200 で取得・表を直接確認）
+  #   例: Veterans Day 週（データ週 11/6 → 振替 2026-11-12 木 12:00 p.m. ET）。
+  #   修正はアンカー時刻の変更 = pre/post ウィンドウの当たり判定が1時間動くため、
+  #   protocol v1.4 の群定義に影響しうる。コード修正と protocol の扱いを決めてから行う
+  #   （本ファイルの月次更新では触らない）。
+  # 確認済み(2026-09-13): シフト【日】のロジックは公式と一致。
+  #   Labor Day 9/7(月)→9/10木 / Columbus 10/12(月)→10/15木 / Veterans 11/11(水)→11/12木。
+  #   Thanksgiving 11/26(木) は公式表に振替行が無く、水曜通常リリースのまま = 実装と一致
+  #   （木曜祝日は水曜の発表後のためシフト不要。推測ではなく公式表で確認）。
   - name: "EIA週次石油在庫"
-    rule: eia_weekly        # 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜11:00 ET
+    rule: eia_weekly        # 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜11:00 ET（↑TODO）
     symbols: [WTI原油]
   - name: "Crop Progress"
     rule: crop_progress     # 月曜16:00 ET・4〜11月のみ。月曜祝日 → 火曜16:00 ET
@@ -68,6 +82,14 @@ events:
   - name: "WASDE"
     datetime_utc: "2026-10-09T16:00:00+00:00"
     symbols: [小麦, トウモロコシ, 大豆]
+  # TODO(2026-09-13): WASDE の 2026年11月・12月分が未登録。本更新では日付を確定できず。
+  #   試した経路: usda.gov の WASDE ページは HTTP 200 だが年間日程が本文テキストに
+  #   出ておらず抽出不可 / usda.gov/oce/commodity/wasde は 403 /
+  #   NASS 公式ICS には WASDE が含まれない（SUMMARY 検索 0件で確認済み）。
+  #   参考（※未確認・WASDEの日付として採用してはいけない）: NASS ICS 上の
+  #   Crop Production は 2026-11-10。例年 WASDE と同日同時刻だが本件は未確認のため
+  #   推測での登録はしない（本ファイルは「公式確認済みの確定日時のみ」が規約）。
+  #   次回更新時にチャット側Claude（Web到達可）へ 11月・12月の WASDE 日程を確認依頼すること。
 
   # --- Grain Stocks（12:00 ET = 16:00 UTC[EDT期間]）: NASS公式ICSで確認 ---
   - name: "Grain Stocks"
@@ -85,6 +107,15 @@ events:
   - name: "米雇用統計"
     datetime_utc: "2026-10-02T12:30:00+00:00"
     symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  # ▼ 以下2件は DST 終了後（2026-11-01 に EDT→EST）のため 8:30 ET = 13:30 UTC。
+  #   EDT 期間（上記 8/7・9/4・10/2）の 12:30 UTC とは1時間ずれる。コピペ時に注意。
+  #   出典: bls.gov/schedule/2026/11_sched.htm（チャット側Claudeで確認・2026-09-13受領）
+  - name: "米雇用統計"
+    datetime_utc: "2026-11-06T13:30:00+00:00"   # EST期間: 8:30 ET = 13:30 UTC
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
+  - name: "米雇用統計"
+    datetime_utc: "2026-12-04T13:30:00+00:00"   # EST期間: 8:30 ET = 13:30 UTC
+    symbols: [小麦, 金, WTI原油, トウモロコシ, 大豆, 銅]
 
   # --- OPEC会合 ---
   # 出典: opec.org プレスリリース 2026-07-05（チャット側Claudeで確認）。
@@ -96,6 +127,16 @@ events:
   # 9月分の会合日は 8/2 の会合後PRで告知される見込み → 月次更新で追記。
   - name: "OPEC会合"
     datetime_utc: "2026-08-02T12:00:00+00:00"
+    symbols: [WTI原油]
+    window_before_h: 48
+    window_after_h: 36
+  # 出典: opec.org プレスリリース 2026-09-06（チャット側Claudeで確認・2026-09-13受領）。
+  # 11月分の会合日は 10/4 の会合後PRで告知される見込み → 次回の月次更新で追記。
+  # 注: 2026-09-06 の会合は登録漏れのまま通過した（当時の月次更新で追記されなかった）。
+  #     過去日のため後追い登録はしない（±14日のウィンドウ外で判定に影響しないため）。
+  #     その期間の原油レコードは event_gate.pre が空で記録されている。
+  - name: "OPEC会合"
+    datetime_utc: "2026-10-04T12:00:00+00:00"
     symbols: [WTI原油]
     window_before_h: 48
     window_after_h: 36

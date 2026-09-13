@@ -69,12 +69,28 @@ def _et_to_utc(d: date, hh: int, mm: int) -> datetime:
     return datetime(d.year, d.month, d.day, hh, mm, tzinfo=ET).astimezone(timezone.utc)
 
 
+# EIA週次石油在庫の発表時刻（ET）。シフト「日」の規則は変更していない（時刻の定数のみ）。
+# 出典: EIA 公式 Holiday Release Schedule
+#   https://www.eia.gov/petroleum/supply/weekly/schedule.php
+#   （2026-09-13 に本環境から HTTP 200 で取得し、表を直接確認）
+# - 通常週: 水曜 10:30 a.m. ET
+#   公式の "The standard release time and day of the week will be at 10:30 a.m.
+#   eastern time on Wednesdays" と一致（変更なし）。
+# - シフト週: 木曜 12:00 p.m. ET
+#   **2026-09-13 訂正**: 実装値は 11:00 だったが、公式表では 11:00 は
+#   2025-01-02(New Year's) が最後で、2025-01-23 以降の振替は全て 12:00 p.m.
+#   （例: Veterans Day 2026 → データ週 11/6 の振替が 11/12 木 12:00 p.m.）。
+#   事実誤りの訂正であり、観測結果に基づく調整ではない（protocol v1.12 に記録）。
+EIA_NORMAL_ET = (10, 30)    # 水曜（通常週）
+EIA_SHIFTED_ET = (12, 0)    # 木曜（週前半に連邦祝日があった週）
+
+
 def _gen_eia_weekly(monday: date, holidays: set):
-    """EIA週次石油在庫: 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜11:00 ET。"""
+    """EIA週次石油在庫: 水曜10:30 ET。週前半(月〜水)に連邦祝日 → 木曜12:00 ET。"""
     week_first_half = {monday + timedelta(days=i) for i in range(3)}  # 月,火,水
     if week_first_half & holidays:
-        return _et_to_utc(monday + timedelta(days=3), 11, 0)   # 木曜11:00 ET
-    return _et_to_utc(monday + timedelta(days=2), 10, 30)      # 水曜10:30 ET
+        return _et_to_utc(monday + timedelta(days=3), *EIA_SHIFTED_ET)  # 木曜
+    return _et_to_utc(monday + timedelta(days=2), *EIA_NORMAL_ET)       # 水曜
 
 
 def _gen_crop_progress(monday: date, holidays: set):
